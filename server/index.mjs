@@ -35,6 +35,7 @@ const MIME = {
 const rooms = new Map();
 let nextPlayerId = 1;
 let saveTimer = null;
+let lastHealthLog = 0;
 
 /*
  * Room shape:
@@ -218,21 +219,34 @@ function welcome(room, player) {
 
 async function serveHttp(req, res) {
   const url = new URL(req.url ?? '/', 'http://localhost');
-  if (url.pathname === '/health') {
-    res.writeHead(200, {
-      'content-type': 'application/json; charset=utf-8',
-      'access-control-allow-origin': '*',
-      'cache-control': 'no-store',
-    });
-    res.end(JSON.stringify({
+  if (url.pathname === '/health' || url.pathname === '/healthz' || url.pathname === '/health/') {
+    // Timeweb probes this path from localhost. Keep it independent of rooms,
+    // databases and any other startup work, and answer every HTTP method.
+    const body = JSON.stringify({
       ok: true,
+      uptime: Math.round(process.uptime()),
       rooms: [...rooms.values()].map((room) => ({
         id: room.id,
         seed: room.seed,
         players: room.players.size,
         ...roomTime(room),
       })),
-    }));
+    });
+    const now = Date.now();
+    if (now - lastHealthLog > 15000) {
+      lastHealthLog = now;
+      console.log(
+        `[health] ${req.method} ${url.pathname} from ${req.socket.remoteAddress} -> 200`,
+      );
+    }
+    res.writeHead(200, {
+      'content-type': 'application/json; charset=utf-8',
+      'content-length': Buffer.byteLength(body),
+      'access-control-allow-origin': '*',
+      'cache-control': 'no-store',
+      connection: 'close',
+    });
+    res.end(body);
     return;
   }
 
@@ -488,8 +502,15 @@ setInterval(() => {
 }, 10000);
 
 loadRooms();
-httpServer.listen(PORT, '0.0.0.0', () => {
-  console.log(`[server] ROTWOOD multiplayer listening on 0.0.0.0:${PORT}`);
+console.log(
+  `[server] env PORT=${process.env.PORT ?? '(unset)'} WS_PORT=${process.env.WS_PORT ?? '(unset)'} -> listening on ${PORT}`,
+);
+// No explicit host: Node binds dual-stack (::) when IPv6 is available, which
+// accepts both 127.0.0.1 and ::1. Timeweb probes health from localhost.
+httpServer.listen(PORT, () => {
+  const address = httpServer.address();
+  const where = typeof address === 'object' && address ? `${address.address}:${address.port}` : String(address);
+  console.log(`[server] ROTWOOD multiplayer listening on ${where}`);
   console.log(`[server] static root: ${STATIC_ROOT}`);
 });
 
