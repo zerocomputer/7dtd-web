@@ -1,0 +1,24 @@
+{
+  "name": "rotwood",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "concurrently -k -n world,web -c yellow,cyan \"node server/index.mjs\" \"vite --host 0.0.0.0 --port 5180 --strictPort\"",
+    "dev:web": "vite --host 0.0.0.0 --port 5180 --strictPort",
+    "server": "node server/index.mjs",
+    "start": "node server/index.mjs",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview --host 0.0.0.0 --port 4180 --strictPort"
+  },
+  "dependencies": {
+    "three": "^0.187.0",
+    "ws": "^8.22.1"
+  },
+  "devDependencies": {
+    "@types/three": "^0.187.0",
+    "concurrently": "^10.0.6",
+    "typescript": "^7.0.2",
+    "vite": "^8.3.6"
+  }
+}

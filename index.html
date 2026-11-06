@@ -1,0 +1,342 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no" />
+    <meta name="theme-color" content="#12100d" />
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' fill='%2312100d'/%3E%3Cpath d='M18 50V14h16c8 0 13 4 13 11 0 5-3 8-7 10l9 15H39l-7-13h-4v13zm10-22h5c3 0 5-1 5-4s-2-3-5-3h-5z' fill='%23e8a33d'/%3E%3C/svg%3E" />
+    <title>ROTWOOD — 7 дней до рассвета</title>
+    <link rel="stylesheet" href="/src/style.css" />
+  </head>
+  <body>
+    <div id="app">
+      <canvas id="game"></canvas>
+
+      <div id="hud" class="hidden">
+        <div id="vignette"></div>
+        <div id="grain"></div>
+        <div id="damage-flash"></div>
+        <div id="underwater"></div>
+        <div id="poison"></div>
+
+        <div id="topbar">
+          <div id="objective">
+            <div class="obj-label">ЦЕЛЬ ВЫЖИВАНИЯ</div>
+            <div class="obj-text">Продержаться семь ночей</div>
+            <div id="obj-days" class="obj-days"></div>
+            <div id="town-hint" class="town-hint"></div>
+          </div>
+          <div id="compass"><div id="compass-strip"></div><div id="compass-needle"></div></div>          <div id="clock">
+            <span id="day-label">ДЕНЬ 1</span>
+            <span id="time-label">16:00</span>
+          </div>
+        </div>
+
+        <div id="crosshair">
+          <div class="ch-dot"></div>
+          <svg class="ch-ring" viewBox="0 0 44 44">
+            <circle class="ch-bg" cx="22" cy="22" r="17"></circle>
+            <circle id="mine-ring" cx="22" cy="22" r="17"></circle>
+          </svg>
+        </div>
+        <div id="target-label"></div>
+
+        <div id="stats">
+          <div class="stat-row">
+            <div class="stat-icon hp">♥</div>
+            <div class="stat-body">
+              <div class="stat-name">ЗДОРОВЬЕ</div>
+              <div class="stat-bar"><div id="hp-fill" class="fill hp"></div></div>
+            </div>
+            <div id="hp-value" class="stat-value">100</div>
+          </div>
+          <div class="stat-row">
+            <div class="stat-icon sp">⚡</div>
+            <div class="stat-body">
+              <div class="stat-name">ВЫНОСЛИВОСТЬ</div>
+              <div class="stat-bar"><div id="sp-fill" class="fill sp"></div></div>
+            </div>
+            <div id="sp-value" class="stat-value">100</div>
+          </div>
+          <div class="stat-row">
+            <div class="stat-icon food">🍖</div>
+            <div class="stat-body">
+              <div class="stat-name">ГОЛОД</div>
+              <div class="stat-bar"><div id="food-fill" class="fill food"></div></div>
+            </div>
+            <div id="food-value" class="stat-value">100</div>
+          </div>
+          <div class="stat-row">
+            <div class="stat-icon water">💧</div>
+            <div class="stat-body">
+              <div class="stat-name">ЖАЖДА</div>
+              <div class="stat-bar"><div id="water-fill" class="fill water"></div></div>
+            </div>
+            <div id="water-value" class="stat-value">100</div>
+          </div>
+          <div id="kills-label">УБИТО: 0</div>
+        </div>
+
+        <div id="night-banner" class="hidden">
+          <div class="nb-title">НОЧЬ БЛИЗКО</div>
+          <div class="nb-sub">Они уже идут за тобой</div>
+        </div>
+
+        <div id="hint"></div>
+
+        <div id="hotbar">
+          <div class="hotbar-slots"></div>
+          <div class="hotbar-name" id="hotbar-name"></div>
+        </div>
+
+        <div id="toasts"></div>
+
+        <div id="chat-log" aria-live="polite"></div>
+        <form id="chat-form" class="hidden">
+          <input id="chat-input" type="text" maxlength="180" placeholder="Сообщение…  Enter — отправить, Esc — закрыть" autocomplete="off" />
+        </form>
+      </div>
+
+      <div id="craft" class="overlay hidden">
+        <div class="inv-window">
+          <div class="inv-head">
+            <div>
+              <div class="eyebrow">СНАРЯЖЕНИЕ · РЮКЗАК · КРАФТ</div>
+              <h2>Инвентарь</h2>
+            </div>
+            <div class="inv-head-actions">
+              <div id="inv-level" class="inv-level">УРОВЕНЬ 1</div>
+              <button id="craft-close" class="btn ghost">E · Закрыть</button>
+            </div>
+          </div>
+          <div class="inv-cols">
+            <aside class="inv-player">
+              <div class="side-title">ВЫЖИВШИЙ</div>
+              <div class="inv-portrait">
+                <div class="inv-portrait-head"></div>
+                <div class="inv-portrait-body"></div>
+                <div class="inv-portrait-ring"></div>
+              </div>
+              <div class="inv-stats" id="inv-stats"></div>
+              <div class="side-title">СНАРЯЖЕНИЕ</div>
+              <div class="equip-grid">
+                <div class="equip-slot" title="Голова"><span>ГОЛОВА</span></div>
+                <div class="equip-slot" title="Куртка"><span>КУРТКА</span></div>
+                <div class="equip-slot" title="Штаны"><span>ШТАНЫ</span></div>
+                <div class="equip-slot" title="Обувь"><span>ОБУВЬ</span></div>
+                <div class="equip-slot wide" title="Оружие"><span>ОРУЖИЕ</span></div>
+                <div class="equip-slot wide" title="Резерв"><span>РЕЗЕРВ</span></div>
+              </div>
+              <div class="inv-xp-wrap">
+                <div class="inv-xp-label"><span>ОПЫТ</span><span id="inv-xp-text">0 / 100</span></div>
+                <div class="inv-xp-bar"><div id="inv-xp-fill"></div></div>
+              </div>
+            </aside>
+            <section class="inv-bag">
+              <div class="side-title">РЮКЗАК <span id="inv-capacity">0 / 30</span></div>
+              <div id="inventory-grid" class="inv-grid"></div>
+              <div class="side-title inv-hotbar-title">ХОТБАР</div>
+              <div id="inv-hotbar" class="inv-hotbar"></div>
+              <div class="inv-hint">ЛКМ по предмету — назначить в выбранный слот хотбара. E / Esc — закрыть.</div>
+            </section>
+            <aside class="inv-craft">
+              <div class="side-title">КРАФТ</div>
+              <div class="craft-list" id="recipe-list"></div>
+              <div class="craft-tip">Добывайте блоки и обыскивайте здания. Крафт доступен сразу — верстак не нужен.</div>
+            </aside>
+          </div>
+        </div>
+      </div>
+
+      <div id="skills" class="overlay hidden">
+        <div class="skills-window">
+          <div class="inv-head">
+            <div>
+              <div class="eyebrow">ВЫЖИВАНИЕ · РАЗВИТИЕ</div>
+              <h2>Навыки</h2>
+            </div>
+            <div class="inv-head-actions">
+              <div id="skills-points" class="inv-level">ОЧКИ: 0</div>
+              <button id="skills-close" class="btn ghost">P · Закрыть</button>
+            </div>
+          </div>
+          <div class="skills-xp-wrap">
+            <div class="inv-xp-label"><span id="skills-level">УРОВЕНЬ 1</span><span id="skills-xp-text">0 / 100</span></div>
+            <div class="inv-xp-bar"><div id="skills-xp-fill"></div></div>
+          </div>
+          <div class="skills-cols">
+            <aside class="skills-attrs">
+              <div class="side-title">АТРИБУТЫ</div>
+              <div id="skills-attr-list"></div>
+            </aside>
+            <section class="skills-perks">
+              <div class="side-title">ПЕРКИ</div>
+              <div id="skills-perk-list"></div>
+            </section>
+          </div>
+          <div class="skills-tip">Опыт дают убийства, добыча, лут, крафт и зачистка зданий. Один уровень — одно очко навыка.</div>
+        </div>
+      </div>
+
+      <div id="loot" class="overlay hidden">
+        <div class="loot-window">
+          <div class="loot-head">
+            <div>
+              <div class="eyebrow">ОБЫСК КОНТЕЙНЕРА</div>
+              <h2 id="loot-title">Ящик</h2>
+              <div class="loot-danger">Мир не на паузе. Зомби могут подойти сзади.</div>
+            </div>
+            <button id="loot-close" class="btn ghost">E · Закрыть</button>
+          </div>
+          <div class="loot-body">
+            <div id="loot-list" class="loot-list"></div>
+            <aside class="loot-side">
+              <div class="side-title">В РЮКЗАКЕ</div>
+              <div id="loot-inv" class="inv-list"></div>
+            </aside>
+          </div>
+          <div class="loot-foot">
+            <button id="loot-all" class="btn primary">Забрать всё</button>
+            <span class="loot-note">ЛКМ по предмету — забрать один стак</span>
+          </div>
+        </div>
+      </div>
+
+      <div id="menu" class="overlay title-screen">
+        <div class="title-bg"></div>
+        <div class="title-inner">
+          <div class="brand">
+            <div class="brand-mark">R</div>
+            <div>
+              <div class="eyebrow">ВЫЖИВАНИЕ · КРАФТ · ОБОРОНА</div>
+              <h1>ROTWOOD<span class="dot">.</span></h1>
+            </div>
+          </div>
+          <p class="tagline">Семь дней до рассвета. Держись до последней ночи.</p>
+
+          <div class="mp-panel" id="mp-panel">
+            <div class="mp-head">
+              <span id="mp-dot" class="mp-dot"></span>
+              <span id="mp-status">Подключение к серверу…</span>
+            </div>
+            <div class="mp-fields">
+              <label>ИМЯ<input id="mp-name" type="text" maxlength="16" placeholder="Выживший" autocomplete="off" /></label>
+              <label>КОМНАТА<input id="mp-room" type="text" maxlength="24" placeholder="rotwood" autocomplete="off" /></label>
+            </div>
+            <div class="mp-note">Друзья входят в ту же комнату на этом сервере.</div>
+          </div>
+
+          <div class="menu-actions">
+            <button id="btn-continue" class="btn primary hidden">Продолжить</button>
+            <div class="seed-row" id="seed-row">
+              <label for="seed-input">СИД МИРА</label>
+              <input id="seed-input" type="text" maxlength="18" placeholder="случайный" autocomplete="off" />
+            </div>
+            <button id="btn-new" class="btn secondary">Новый мир</button>
+          </div>
+
+          <div class="controls-grid">
+            <div><kbd>W A S D</kbd><span>Движение</span></div>
+            <div><kbd>SHIFT</kbd><span>Бег</span></div>
+            <div><kbd>SPACE</kbd><span>Прыжок / плыть</span></div>
+            <div><kbd>ЛКМ</kbd><span>Добыча / атака / съесть</span></div>
+            <div><kbd>ПКМ</kbd><span>Поставить блок</span></div>
+            <div><kbd>E</kbd><span>Крафт / обыскать</span></div>
+            <div><kbd>H · J · K</kbd><span>Еда · вода · лечение</span></div>
+            <div><kbd>F · T</kbd><span>Фонарь · чат</span></div>
+            <div><kbd>1–9 · КОЛЕСО</kbd><span>Инвентарь</span></div>
+          </div>
+          <div class="menu-foot">Лучший опыт — в полноэкранном режиме. Нажмите F11.</div>
+        </div>
+
+        <aside class="title-aside">
+          <div class="aside-kicker">ЗАПИСКА НА СТЕНЕ</div>
+          <div class="aside-step">
+            <span class="step-num">01</span>
+            <div><b>Тишина</b><em>слишком ровная для живого города</em></div>
+          </div>
+          <div class="aside-step">
+            <span class="step-num">02</span>
+            <div><b>Они</b><em>не стоят на месте и не спят</em></div>
+          </div>
+          <div class="aside-step">
+            <span class="step-num">03</span>
+            <div><b>Рассвет</b><em>не гарантирует спасения</em></div>
+          </div>
+          <div class="aside-big">7</div>
+          <div class="aside-note">НЕ ВЕРЬ ТИШИНЕ.<br />НЕ ОСТАВЛЯЙ СПИНУ ОТКРЫТОЙ.</div>
+        </aside>
+      </div>
+
+      <div id="loading" class="overlay hidden">
+        <div class="loading-inner">
+          <div class="brand small">
+            <div class="brand-mark">R</div>
+            <div>
+              <div class="eyebrow">ГЕНЕРАЦИЯ МИРА</div>
+              <h1>ROTWOOD<span class="dot">.</span></h1>
+            </div>
+          </div>
+          <div class="load-bar"><div id="load-fill"></div></div>
+          <div id="load-text">Собираем землю по кускам…</div>
+          <div class="load-seed" id="load-seed"></div>
+        </div>
+      </div>
+
+      <div id="pause" class="overlay hidden">
+        <div class="pause-window">
+          <div class="eyebrow">ПАУЗА</div>
+          <h2>Передышка</h2>
+          <p class="muted">Мир остановился. Но только пока вы здесь.</p>
+          <div class="settings">
+            <label>ЧУВСТВИТЕЛЬНОСТЬ <span id="sens-value">1.0</span>
+              <input id="sens" type="range" min="0.3" max="2.5" step="0.1" value="1" />
+            </label>
+            <label>ГРОМКОСТЬ <span id="vol-value">70</span>
+              <input id="vol" type="range" min="0" max="100" step="1" value="70" />
+            </label>
+            <label>ДАЛЬНОСТЬ ВИДИМОСТИ <span id="dist-value">5</span>
+              <input id="dist" type="range" min="3" max="7" step="1" value="5" />
+            </label>
+          </div>
+          <div class="pause-actions">
+            <button id="btn-resume" class="btn primary">Продолжить</button>
+            <button id="btn-save-exit" class="btn ghost">Сохранить и выйти</button>
+          </div>
+          <div class="pause-stats" id="pause-stats"></div>
+        </div>
+      </div>
+
+      <div id="ready" class="overlay hidden">
+        <div class="ready-window">
+          <div class="eyebrow">МИР ГОТОВ</div>
+          <h2>Добро пожаловать в Ротвуд</h2>
+          <p class="muted" id="ready-info"></p>
+          <div class="ready-goal">
+            <span class="goal-num">7</span>
+            <span class="goal-text">дней до рассвета.<br />Построй укрытие и продержись.</span>
+          </div>
+          <button id="btn-enter" class="btn primary">Войти в мир</button>
+          <div class="ready-tip">Клик захватывает мышь · ESC — пауза · E — крафт</div>
+        </div>
+      </div>
+
+      <div id="death" class="overlay hidden">
+        <div class="death-window">
+          <div class="eyebrow">ВЫ ПОГИБЛИ</div>
+          <h2>Тьма забрала тебя</h2>
+          <p class="muted" id="death-info"></p>
+          <button id="btn-respawn" class="btn primary">Возродиться</button>
+        </div>
+      </div>
+
+      <div id="fatal" class="overlay hidden">
+        <div class="fatal-window">
+          <h2>Не удалось запустить WebGL</h2>
+          <p class="muted">Попробуйте Chrome, Edge или Firefox с включённым аппаратным ускорением.</p>
+        </div>
+      </div>
+    </div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
