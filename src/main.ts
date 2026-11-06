@@ -24,6 +24,11 @@ import type { AttrId, PerkId } from './progression';
 import { PoiController, buildingName, PoiCallbacks } from './poi';
 import type { BuildingSpec, Town } from './town';
 import {
+  ArmorEquipment, ArmorSlot, ARMOR_SLOTS, armorForItem, armorStats,
+  adrenalineDamage, emptyArmor,
+} from './armor';
+import { loadInventoryProfile, saveInventoryProfile } from './inventorystore';
+import {
   loadSave, writeSave, clearSave, saveInfo,
   loadSettings, writeSettings, SaveData, Settings,
 } from './save';
@@ -51,8 +56,10 @@ try {
   throw err;
 }
 
-renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.75));
+renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.25));
 renderer.setSize(window.innerWidth, window.innerHeight);
+renderer.shadowMap.autoUpdate = false;
+renderer.shadowMap.needsUpdate = true;
 renderer.outputColorSpace = THREE.SRGBColorSpace;
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
 renderer.toneMappingExposure = 0.9;
@@ -89,10 +96,16 @@ let zombies: ZombieManager | null = null;
 let state: GameState = 'menu';
 let settings: Settings = loadSettings();
 
-let inventory: Record<string, number> = {};
-let hotbar: (string | null)[] = new Array(9).fill(null);
-let selected = 0;
+const storedProfile = loadInventoryProfile();
+let inventory: Record<string, number> = storedProfile ? { ...storedProfile.inventory } : {};
+let hotbar: (string | null)[] = storedProfile ? [...storedProfile.hotbar] : new Array(9).fill(null);
+let selected = storedProfile ? storedProfile.selected : 0;
+let armor: ArmorEquipment = storedProfile ? storedProfile.armor : emptyArmor();
+let hasInventoryProfile = !!storedProfile;
 let kills = 0;
+let bossZombie: Zombie | null = null;
+let lastBossDay = 0;
+let bossWarnedDay = 0;
 const spawnPoint = new THREE.Vector3();
 
 const input: InputState = { forward: false, back: false, left: false, right: false, jump: false, sprint: false };
@@ -125,6 +138,11 @@ let lastNoAmmoToast = 0;
 
 const REACH = 6;
 let lastFrameTime = performance.now();
+let shadowTimer = 0;
+let perfFrameMs = 16.7;
+let dprTarget = 1;
+let dprCurrent = 1;
+let perfTimer = 0;
 let mpWorld = false;
 let netTimer = 0;
 let chatOpen = false;
@@ -149,6 +167,8 @@ const ui = new UI({
   onUpgradeAttr: (id) => upgradeAttr(id),
   onUpgradePerk: (id) => upgradePerk(id),
   onSkillsClose: () => closeSkills(),
+  onEquipArmor: (id) => equipArmor(id),
+  onUnequipArmor: (slot) => unequipArmor(slot),
   onLootTake: (index) => takeLootItem(index),
   onLootAll: () => takeAllLoot(),
   onLootClose: () => closeLoot(),
@@ -167,6 +187,13 @@ const ui = new UI({
     world?.setRenderDistance(settings.distance);
     environment?.setRenderDistance(settings.distance);
   },
+  onQuality: (q) => {
+    settings.quality = q;
+    writeSettings(settings);
+    applyGraphicsQuality();
+    ui.setSettings(settings.sensitivity, settings.volume, settings.distance, settings.quality);
+    ui.toast(`Графика: ${q === 'low' ? 'низкая' : q === 'high' ? 'высокая' : 'средняя'}`, 'good');
+  },
   onChatSend: (text) => {
     net.sendChat(text);
     closeChat();
@@ -174,7 +201,8 @@ const ui = new UI({
   onChatClose: () => closeChat(),
 });
 
-ui.setSettings(settings.sensitivity, settings.volume, settings.distance);
+ui.setSettings(settings.sensitivity, settings.volume, settings.distance, settings.quality);
+applyGraphicsQuality();
 sound.setVolume(settings.volume);
 
 /* ------------------------------------------------------------------ */
@@ -193,6 +221,9 @@ net.onState = () => {};
 net.onEdit = (x, y, z, id) => applyRemoteEdit(x, y, z, id);
 net.onLooted = (key) => applyRemoteLoot(key);
 net.onPoiKill = (id, index, remaining, total) => applyRemotePoiKill(id, index, remaining, total);
+net.onStreetKill = (townKey, count) => {
+  world?.streetKills.set(townKey, count);
+};
 net.onChat = (message: NetChatMessage) => {
   ui.chatMessage(message.text, message.name, message.color, message.system || !message.name);
 };
@@ -243,13 +274,30 @@ const poiCallbacks: PoiCallbacks = {
 function handleZombieDeath(z: Zombie, w: World) {
   const poiId = z.poiId;
   const poiIndex = z.poiIndex;
+  if (z.kind === 'boss') bossZombie = null;
   poiController.handleDeath(z, w, poiCallbacks);
-  if (mpWorld && poiId && poiIndex >= 0) {
+  if (poiId?.startsWith('street:')) {
+    const townKey = poiId.slice('street:'.length);
+    w.addStreetKill(townKey);
+    if (mpWorld) net.sendStreetKill(townKey);
+  }
+  if (poiId && poiIndex >= 0) {
     w.markPoiKilled(poiId, poiIndex);
-    const state = w.poiStates.get(poiId);
-    net.sendPoiKill(poiId, poiIndex, state?.remaining ?? 0, state?.total ?? 1);
+    if (mpWorld) {
+      const state = w.poiStates.get(poiId);
+      net.sendPoiKill(poiId, poiIndex, state?.remaining ?? 0, state?.total ?? 1);
+    }
   }
   if (!z.killedByPlayer) return;
+  if (z.kind === 'boss') {
+    gainXp(700);
+    addItem('med:medkit', 3);
+    addItem('mat:rifleammo', 30);
+    addItem('mat:scrap', 25);
+    addItem('armor:chest', 1);
+    ui.showBossBanner('МАТКА ПАЛА', 'Город затих. Ненадолго.');
+    sound.bossRoar();
+  }
   gainXp(15 + (environment?.day ?? 1) * 3);
   const drops = generateZombieLoot(w.seed, Math.floor(z.pos.x), Math.floor(z.pos.y), Math.floor(z.pos.z));
   if (drops.length > 0) {
@@ -313,7 +361,7 @@ async function startNewWorldAsync(seedText: string) {
   mpWorld = false;
   ui.setPauseMode(false);
   if (loadSave()) {
-    const ok = window.confirm('Начать новый мир? Текущее сохранение будет удалено.');
+    const ok = window.confirm('Начать новый мир? Сохранение мира будет удалено, инвентарь и прокачка останутся.');
     if (!ok) {
       startingWorld = false;
       return;
@@ -334,6 +382,69 @@ function continueWorld() {
     return;
   }
   void buildWorld(save, save.seed);
+}
+
+function applyGraphicsQuality() {
+  const quality = settings.quality;
+  const cap = quality === 'low' ? 0.85 : quality === 'medium' ? 1.0 : 1.4;
+  dprTarget = Math.min(window.devicePixelRatio || 1, cap);
+  dprCurrent = dprTarget;
+  renderer.setPixelRatio(dprTarget);
+  renderer.setSize(window.innerWidth, window.innerHeight);
+  renderer.shadowMap.enabled = quality !== 'low';
+  renderer.shadowMap.needsUpdate = quality !== 'low';
+  environment?.setShadowQuality(quality === 'low' ? 512 : quality === 'high' ? 2048 : 1024);
+  torchLights.setLimit(quality === 'low' ? 3 : quality === 'high' ? 6 : 5);
+  if (zombies) zombies.viewDistance = quality === 'low' ? 38 : quality === 'high' ? 72 : 56;
+  const distance = quality === 'low' ? Math.min(settings.distance, 4) : settings.distance;
+  world?.setRenderDistance(distance);
+  environment?.setRenderDistance(distance);
+}
+
+function startingInventory(): Record<string, number> {
+  return {
+    'tool:axe': 1,
+    [blockItemId(Block.Planks)]: 12,
+    [blockItemId(Block.Torch)]: 3,
+    'food:beans': 2,
+    'drink:water': 2,
+  };
+}
+
+function startingHotbar(): (string | null)[] {
+  return [
+    'tool:axe',
+    blockItemId(Block.Planks),
+    blockItemId(Block.Torch),
+    'food:beans',
+    'drink:water',
+    null, null, null, null,
+  ];
+}
+
+function sanitizeArmor(data: Partial<ArmorEquipment> | undefined | null): ArmorEquipment {
+  const result = emptyArmor();
+  if (!data) return result;
+  for (const slot of ARMOR_SLOTS) {
+    const id = data[slot];
+    if (typeof id !== 'string') continue;
+    const def = armorForItem(id);
+    if (def && def.slot === slot) result[slot] = id;
+  }
+  return result;
+}
+
+let profileSaveTimer: ReturnType<typeof setTimeout> | null = null;
+
+function persistInventory(immediate = false) {
+  hasInventoryProfile = true;
+  const write = () => {
+    profileSaveTimer = null;
+    saveInventoryProfile({ inventory: { ...inventory }, hotbar: [...hotbar], selected, armor: { ...armor } });
+  };
+  if (profileSaveTimer) clearTimeout(profileSaveTimer);
+  if (immediate) write();
+  else profileSaveTimer = setTimeout(write, 180);
 }
 
 async function buildWorld(save: SaveData | null, seed: number) {
@@ -391,6 +502,9 @@ async function buildWorld(save: SaveData | null, seed: number) {
       const index = Number(key.slice(cut + 1));
       if (Number.isFinite(index)) newWorld.markPoiKilled(key.slice(0, cut), index);
     }
+    for (const [key, count] of net.streetKills) {
+      if (count > 0) newWorld.streetKills.set(key, count);
+    }
     newWorld.onEdit = (x, y, z, id) => {
       if (net.connected) net.sendEdit(x, y, z, id);
     };
@@ -400,6 +514,7 @@ async function buildWorld(save: SaveData | null, seed: number) {
 
   const newEnv = new Environment(scene);
   newEnv.setRenderDistance(settings.distance);
+  if (useMp && net.dayLength > 0) newEnv.dayLength = net.dayLength;
   environment = newEnv;
 
   const spawn = newWorld.findSpawn();
@@ -476,9 +591,13 @@ async function buildWorld(save: SaveData | null, seed: number) {
   zombies.kills = save?.kills ?? 0;
 
   if (save) {
-    inventory = { ...(save.inventory ?? {}) };
-    hotbar = normalizeHotbar(save.hotbar);
-    selected = Math.max(0, Math.min(8, save.selected ?? 0));
+    if (!hasInventoryProfile) {
+      inventory = { ...(save.inventory ?? {}) };
+      hotbar = normalizeHotbar(save.hotbar);
+      selected = Math.max(0, Math.min(8, save.selected ?? 0));
+      armor = sanitizeArmor(save.armor);
+      persistInventory(true);
+    }
     kills = save.kills ?? 0;
     for (const entry of save.pois ?? []) {
       if (Array.isArray(entry) && typeof entry[0] === 'string') {
@@ -486,6 +605,20 @@ async function buildWorld(save: SaveData | null, seed: number) {
           remaining: Math.max(0, Number(entry[1]) || 0),
           total: Math.max(1, Number(entry[2]) || Number(entry[1]) || 1),
         });
+      }
+    }
+    for (const entry of save.poiKilled ?? []) {
+      if (!Array.isArray(entry)) continue;
+      const [id, index] = entry;
+      if (typeof id === 'string' && Number.isFinite(Number(index))) {
+        newWorld.markPoiKilled(id, Math.floor(Number(index)));
+      }
+    }
+    for (const entry of save.streetKills ?? []) {
+      if (!Array.isArray(entry)) continue;
+      const [key, count] = entry;
+      if (typeof key === 'string' && Number(count) > 0) {
+        newWorld.streetKills.set(key, Math.floor(Number(count)));
       }
     }
     for (const entry of save.containers ?? []) {
@@ -496,31 +629,27 @@ async function buildWorld(save: SaveData | null, seed: number) {
       );
     }
   } else {
-    inventory = {
-      'tool:axe': 1,
-      [blockItemId(Block.Planks)]: 12,
-      [blockItemId(Block.Torch)]: 3,
-      'food:beans': 2,
-      'drink:water': 2,
-    };
-    hotbar = [
-      'tool:axe',
-      blockItemId(Block.Planks),
-      blockItemId(Block.Torch),
-      'food:beans',
-      'drink:water',
-      null, null, null, null,
-    ];
-    selected = 0;
+    if (!hasInventoryProfile) {
+      inventory = startingInventory();
+      hotbar = startingHotbar();
+      selected = 0;
+      armor = emptyArmor();
+      persistInventory(true);
+    }
     kills = 0;
   }
 
+  applyProgression();
+  applyGraphicsQuality();
   updateViewModel();
   syncUI();
   lastDanger = isDangerHour(newEnv.hour);
   lastDay = newEnv.day;
   lastWarnDay = -1;
   wonShown = false;
+  bossZombie = null;
+  lastBossDay = 0;
+  bossWarnedDay = 0;
   saveTimer = 0;
 
   ui.setLoading(0.94, 'Загружаем модели…');
@@ -614,6 +743,7 @@ function openCraft() {
 }
 
 function inventoryInfo(): InventoryInfo {
+  const stats = armorStats(armor);
   return {
     level: progression.level,
     xp: progression.xp,
@@ -625,29 +755,42 @@ function inventoryInfo(): InventoryInfo {
     hunger: player.hunger,
     thirst: player.thirst,
     poison: player.poison,
+    armor: { ...armor },
+    armorReduction: stats.reduction,
+    setActive: stats.setActive,
+    adrenaline: stats.adrenaline && player.health > 0 && player.health < player.maxHealth * 0.35,
   };
 }
 
 function applyProgression() {
+  const stats = armorStats(armor);
   const oldMaxHealth = player.maxHealth;
   const oldMaxStamina = player.maxStamina;
-  player.maxHealth = progression.maxHealth;
-  player.maxStamina = progression.maxStamina;
+  player.maxHealth = progression.maxHealth + stats.maxHealth;
+  player.maxStamina = progression.maxStamina + stats.staminaBonus;
   if (player.maxHealth > oldMaxHealth) player.health += player.maxHealth - oldMaxHealth;
   if (player.maxStamina > oldMaxStamina) player.stamina += player.maxStamina - oldMaxStamina;
   player.health = Math.min(player.health, player.maxHealth);
   player.stamina = Math.min(player.stamina, player.maxStamina);
-  player.moveMultiplier = progression.moveMultiplier;
+  player.moveMultiplier = progression.moveMultiplier * (1 + stats.moveBonus);
   player.sprintMultiplier = progression.sprintMultiplier;
   player.hungerRate = progression.hungerRate;
   player.thirstRate = progression.thirstRate;
   player.healMultiplier = progression.healMultiplier;
   player.detectMultiplier = progression.detectMultiplier;
+  player.armorReduction = stats.reduction;
+  player.fallDamageMultiplier = stats.fallMultiplier;
+  player.adrenaline = stats.adrenaline;
+}
+
+function armorDamageMultiplier(): number {
+  const stats = armorStats(armor);
+  return adrenalineDamage(stats.adrenaline, player.health, player.maxHealth);
 }
 
 function gainXp(amount: number) {
   if (amount <= 0) return;
-  const result = progression.addXp(amount);
+  const result = progression.addXp(amount * armorStats(armor).xpMultiplier);
   if (result.leveled > 0) {
     applyProgression();
     ui.chatMessage(
@@ -702,6 +845,44 @@ function upgradePerk(id: PerkId) {
   ui.updateSkills(progression);
   sound.ui();
   saveGame();
+}
+
+function equipArmor(itemId: string) {
+  const def = armorForItem(itemId);
+  if (!def) return;
+  if ((inventory[itemId] ?? 0) <= 0) return;
+  if (armor[def.slot] === itemId) return;
+  const previous = armor[def.slot];
+  inventory[itemId] = (inventory[itemId] ?? 0) - 1;
+  if (inventory[itemId] <= 0) delete inventory[itemId];
+  if (previous) inventory[previous] = (inventory[previous] ?? 0) + 1;
+  armor[def.slot] = itemId;
+  applyProgression();
+  persistInventory();
+  sound.ui();
+  if (state === 'craft') {
+    ui.showCraft(inventory, inventoryInfo(), hotbar, selected);
+  } else {
+    syncUI();
+    ui.toast(`${def.name} надет`, 'good');
+  }
+  updateViewModel();
+}
+
+function unequipArmor(slot: ArmorSlot) {
+  const itemId = armor[slot];
+  if (!itemId) return;
+  armor[slot] = null;
+  inventory[itemId] = (inventory[itemId] ?? 0) + 1;
+  applyProgression();
+  persistInventory();
+  sound.ui();
+  if (state === 'craft') {
+    ui.showCraft(inventory, inventoryInfo(), hotbar, selected);
+  } else {
+    syncUI();
+  }
+  updateViewModel();
 }
 
 function saveAndExit() {
@@ -779,12 +960,18 @@ function saveGame(): boolean {
     edits: world.exportEdits(),
     kills: zombies?.kills ?? kills,
     pois: [...world.poiStates.entries()].map(([id, s]) => [id, s.remaining, s.total]),
+    poiKilled: [...world.poiKills.entries()].flatMap(([id, set]) =>
+      [...set].map((index) => [id, index] as [string, number]),
+    ),
+    streetKills: [...world.streetKills.entries()],
     containers: [...world.containerLoot.entries()].map(
       ([key, stacks]) => [key, stacks.map((s) => [s.item, s.count])],
     ),
     progression: progression.toJSON(),
+    armor: { ...armor },
     timestamp: Date.now(),
   };
+  persistInventory(true);
   return writeSave(data);
 }
 
@@ -803,6 +990,7 @@ document.addEventListener('visibilitychange', () => {
 
 function ensureHotbarItem(id: string) {
   if (hotbar.includes(id)) return;
+  if (id.startsWith('armor:')) return;
   const empty = hotbar.indexOf(null);
   if (empty >= 0) hotbar[empty] = id;
 }
@@ -863,6 +1051,7 @@ function craftRecipe(recipeId: string) {
 }
 
 function assignItem(id: string) {
+  if (id.startsWith('armor:')) return;
   hotbar[selected] = id;
   syncUI();
   updateViewModel();
@@ -883,6 +1072,7 @@ function updateViewModel() {
 }
 
 function syncUI() {
+  persistInventory();
   ui.refreshHotbar(hotbar, selected, inventory);
   if (state === 'craft') ui.updateInventoryPanels(inventory);
 }
@@ -1170,7 +1360,7 @@ function attack(z: Zombie, dir: THREE.Vector3) {
   if (!zombies) return;
   const itemId = hotbar[selected];
   const item = itemId ? getItem(itemId) : undefined;
-  const damage = (item?.tool ? TOOLS[item.tool]?.damage ?? 8 : 7) * progression.meleeMultiplier;
+  const damage = (item?.tool ? TOOLS[item.tool]?.damage ?? 8 : 7) * progression.meleeMultiplier * armorDamageMultiplier();
   const before = zombies.kills;
   zombies.hit(z, damage, dir);
   viewmodel.swing();
@@ -1204,7 +1394,7 @@ function firePistol() {
   const target = zombies.pickTarget(origin, dir, 70, blockHit ? blockHit.distance : Infinity);
   const before = zombies.kills;
   if (target) {
-    zombies.hit(target, (TOOLS.pistol?.damage ?? 55) * progression.rangedMultiplier, dir);
+    zombies.hit(target, (TOOLS.pistol?.damage ?? 55) * progression.rangedMultiplier * armorDamageMultiplier(), dir);
     if (zombies.kills > before) ui.toast('Зомби уничтожен', 'good');
   } else if (blockHit) {
     const def = blockDef(blockHit.id);
@@ -1246,7 +1436,7 @@ function fireBow() {
   const blockHit = world.raycast(origin, dir, 80);
   const target = zombies.pickTarget(origin, dir, 80, blockHit ? blockHit.distance : Infinity);
   if (target) {
-    zombies.hit(target, (TOOLS.bow?.damage ?? 38) * progression.rangedMultiplier, dir);
+    zombies.hit(target, (TOOLS.bow?.damage ?? 38) * progression.rangedMultiplier * armorDamageMultiplier(), dir);
     sound.arrowHit();
     ui.toast('Стрела попала в цель', 'good');
   } else if (blockHit) {
@@ -1263,6 +1453,54 @@ function fireBow() {
   viewmodel.swing();
   sound.bow();
   zombies.makeNoise(player.position.x, player.position.y + 1.4, player.position.z, 42, 2.2);
+}
+
+
+function fireRifle() {
+  if (!world || !zombies) return;
+  const itemId = hotbar[selected];
+  const item = itemId ? getItem(itemId) : undefined;
+  if (item?.tool !== 'rifle') return;
+  const ammo = inventory['mat:rifleammo'] ?? 0;
+  if (ammo <= 0) {
+    if (performance.now() - lastNoAmmoToast > 1800) {
+      lastNoAmmoToast = performance.now();
+      ui.toast('Нет патронов 7.62', 'warn');
+      sound.ui();
+    }
+    attackCooldown = 0.7;
+    return;
+  }
+  inventory['mat:rifleammo'] = ammo - 1;
+  syncUI();
+  const origin = player.eyePosition();
+  const dir = player.getViewDirection();
+  const blockHit = world.raycast(origin, dir, 100);
+  const target = zombies.pickTarget(origin, dir, 100, blockHit ? blockHit.distance : Infinity);
+  const before = zombies.kills;
+  if (target) {
+    zombies.hit(
+      target,
+      (TOOLS.rifle?.damage ?? 92) * progression.rangedMultiplier * armorDamageMultiplier(),
+      dir,
+    );
+    if (zombies.kills > before) ui.toast('Зомби уничтожен', 'good');
+  } else if (blockHit) {
+    const def = blockDef(blockHit.id);
+    particles.burst(
+      blockHit.x + 0.5 + blockHit.nx * 0.48,
+      blockHit.y + 0.5 + blockHit.ny * 0.48,
+      blockHit.z + 0.5 + blockHit.nz * 0.48,
+      def?.color ?? 0x999999, 8, 2.4, 0.06, 20, 0.45, 0.5,
+    );
+  }
+  attackCooldown = TOOLS.rifle?.cooldown ?? 0.85;
+  muzzleLight.intensity = 12;
+  muzzleTimer = 0.07;
+  player.pitch = Math.min(1.55, player.pitch + 0.035);
+  viewmodel.swing();
+  sound.rifle();
+  zombies.makeNoise(player.position.x, player.position.y + 1.4, player.position.z, 120, 4.5);
 }
 
 function attemptPlace(hit: RayHit | null, zTarget: Zombie | null) {
@@ -1348,6 +1586,9 @@ function updateInteractions(dt: number) {
     } else if (held?.tool === 'bow') {
       resetMining();
       if (attackCooldown <= 0) fireBow();
+    } else if (held?.tool === 'rifle') {
+      resetMining();
+      if (attackCooldown <= 0) fireRifle();
     } else if (targetZombie) {
       resetMining();
       if (attackCooldown <= 0) attack(targetZombie, dir);
@@ -1592,6 +1833,10 @@ canvas.addEventListener('click', () => {
   if (state === 'playing' && document.pointerLockElement !== canvas) requestLock();
 });
 
+window.addEventListener('beforeunload', () => {
+  persistInventory(true);
+});
+
 document.addEventListener('pointerlockchange', () => {
   if (document.pointerLockElement === canvas) return;
   if (state === 'playing' && !chatOpen) pauseForPointerLoss();
@@ -1604,13 +1849,60 @@ document.addEventListener('pointerlockerror', () => {
 window.addEventListener('resize', () => {
   player.camera.aspect = window.innerWidth / window.innerHeight;
   player.camera.updateProjectionMatrix();
-  renderer.setSize(window.innerWidth, window.innerHeight);
-  renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.75));
+  applyGraphicsQuality();
 });
 
 /* ------------------------------------------------------------------ */
 /*  Main loop                                                          */
 /* ------------------------------------------------------------------ */
+
+function insideTownBuilding(x: number, z: number): boolean {
+  if (!world) return false;
+  const nearest = world.towns.nearestTown(x, z);
+  if (!nearest) return false;
+  return nearest.town.buildings.some(
+    (b) => x >= b.x0 - 1 && x <= b.x1 + 1 && z >= b.z0 - 1 && z <= b.z1 + 1,
+  );
+}
+
+function spawnBossNearPlayer() {
+  if (!world || !environment || !zombies) return;
+  const px = player.position.x;
+  const pz = player.position.z;
+  for (let attempt = 0; attempt < 80; attempt++) {
+    const angle = Math.random() * Math.PI * 2;
+    const radius = 26 + Math.random() * 18;
+    const x = Math.round(px + Math.cos(angle) * radius);
+    const z = Math.round(pz + Math.sin(angle) * radius);
+    if (insideTownBuilding(x, z)) continue;
+    if (!world.isChunkLoaded(Math.floor(x / 16), Math.floor(z / 16))) continue;
+    const top = world.columnTop(x, z);
+    if (top <= SEA_LEVEL) continue;
+    const topBlock = world.getBlock(x, top, z);
+    if (topBlock === Block.Water || topBlock === Block.Leaves || topBlock === Block.Air) continue;
+    bossZombie = zombies.spawnBoss(x + 0.5, top + 1.02, z + 0.5, environment.day);
+    particles.burst(x + 0.5, top + 1.2, z + 0.5, 0x7d9a42, 40, 3.8, 0.11, 6, 1.6, 2.2);
+    ui.showBossBanner('МАТКА ГНИЛИ', 'Она уже почуяла тебя');
+    sound.bossRoar();
+    return;
+  }
+}
+
+function updateBossEvent() {
+  if (!world || !environment || !zombies) return;
+  if (bossZombie && (bossZombie.dead || bossZombie.group.parent === null)) bossZombie = null;
+  const day = environment.day;
+  if (day % 2 !== 0) return;
+  if (environment.hour >= 20.25 && environment.hour < 21 && bossWarnedDay !== day) {
+    bossWarnedDay = day;
+    ui.showBossBanner('ОНО ПРОСНУЛОСЬ', 'До темноты не выходи на открытое место');
+    sound.bossRoar();
+  }
+  if (environment.hour < 21) return;
+  if (bossZombie || lastBossDay === day) return;
+  lastBossDay = day;
+  spawnBossNearPlayer();
+}
 
 function updateDayNightEvents() {
   if (!environment) return;
@@ -1722,6 +2014,18 @@ function frame(now?: number) {
   const time = now ?? performance.now();
   const dt = Math.min(Math.max(0, (time - lastFrameTime) / 1000), 0.05);
   lastFrameTime = time;
+  perfFrameMs = perfFrameMs * 0.94 + (dt * 1000) * 0.06;
+  perfTimer += dt;
+  if (perfTimer >= 2 && (state === 'playing' || state === 'loot')) {
+    perfTimer = 0;
+    if (perfFrameMs > 26 && dprCurrent > 0.7) {
+      dprCurrent = Math.max(0.7, dprCurrent - 0.1);
+      renderer.setPixelRatio(dprCurrent);
+    } else if (perfFrameMs < 17.5 && dprCurrent < dprTarget) {
+      dprCurrent = Math.min(dprTarget, dprCurrent + 0.05);
+      renderer.setPixelRatio(dprCurrent);
+    }
+  }
 
   netTimer -= dt;
   if (netTimer <= 0) {
@@ -1747,6 +2051,7 @@ function frame(now?: number) {
     viewmodel.update(dt, player.getSpeed());
     if (state === 'playing') updateInteractions(dt);
     updateDayNightEvents();
+    updateBossEvent();
 
     hungerWarn -= dt;
     thirstWarn -= dt;
@@ -1831,6 +2136,11 @@ function frame(now?: number) {
     state === 'playing' || state === 'ready' || state === 'paused' || state === 'craft' || state === 'loot',
   );
 
+  shadowTimer -= dt;
+  if (shadowTimer <= 0) {
+    shadowTimer = 0.28;
+    renderer.shadowMap.needsUpdate = true;
+  }
   renderer.render(scene, player.camera);
 }
 
@@ -1915,6 +2225,46 @@ if (import.meta.env.DEV) {
       return zed ? { x: zed.pos.x, y: zed.pos.y, z: zed.pos.z, kind: zed.kind } : null;
     },
     clearZombies: () => zombies?.clear(),
+    getStreetKills: () => [...(world?.streetKills.entries() ?? [])],
+    getArmor: () => ({ ...armor }),
+    spawnBoss: () => {
+      lastBossDay = 0;
+      spawnBossNearPlayer();
+      return bossZombie ? { x: bossZombie.pos.x, y: bossZombie.pos.y, z: bossZombie.pos.z } : null;
+    },
+    getPerf: () => ({
+      frameMs: Math.round(perfFrameMs * 100) / 100,
+      fps: Math.round(1000 / Math.max(1, perfFrameMs)),
+      zombies: zombies?.zombies.filter((z) => !z.dead).length ?? 0,
+      viewDistance: zombies?.viewDistance ?? 0,
+      pixelRatio: renderer.getPixelRatio(),
+      calls: renderer.info.render.calls,
+      triangles: renderer.info.render.triangles,
+      shadows: renderer.shadowMap.enabled,
+      quality: settings.quality,
+    }),
+    getBoss: () => bossZombie && !bossZombie.dead
+      ? { kind: bossZombie.kind, health: bossZombie.health, maxHealth: bossZombie.maxHealth, x: bossZombie.pos.x, z: bossZombie.pos.z, enraged: bossZombie.enraged }
+      : null,
+    hurt: (amount: number) => player.takeDamage(amount),
+    fireHeld: () => {
+      if (state !== 'playing') return false;
+      const id = hotbar[selected];
+      const tool = id ? getItem(id)?.tool : undefined;
+      if (tool === 'rifle') { fireRifle(); return true; }
+      if (tool === 'pistol') { firePistol(); return true; }
+      if (tool === 'bow') { fireBow(); return true; }
+      return false;
+    },
+    getPoiKills: () => [...(world?.poiKills.entries() ?? [])].map(([id, set]) => [id, [...set]]),
+    killStreetOne: () => {
+      const manager = zombies;
+      if (!manager) return null;
+      const target = manager.zombies.find((z) => !z.dead && z.poiId?.startsWith('street:'));
+      if (!target) return null;
+      manager.hit(target, 99999, new THREE.Vector3(0, 0, 1));
+      return target.poiId;
+    },
     give: (id: string, count = 1) => addItem(id, count),
     getZombies: () => (zombies?.zombies ?? []).filter((z) => !z.dead).map((z) => ({
       x: z.pos.x, y: z.pos.y, z: z.pos.z, health: z.health,

@@ -17,6 +17,7 @@ const SAMPLE_FILES: Record<string, string> = {
   zombie_death: '/audio/zombie_death.mp3',
   zombie_crowd: '/audio/zombie_crowd.mp3',
   gunshot: '/audio/gunshot.mp3',
+  rifle_shot: '/audio/rifle_shot.mp3',
   bow_release: '/audio/bow_release.mp3',
   arrow_hit: '/audio/arrow_hit.mp3',
   wind_day: '/audio/wind_day.mp3',
@@ -339,6 +340,26 @@ export class SoundSystem {
     this.noise(0.2, 1800, 0.6, 0.3, 'lowpass', 1.6);
     this.tone(95, 0.18, 0.18, 'square', 38);
     setTimeout(() => this.noise(0.25, 900, 0.8, 0.08, 'lowpass', 1), 30);
+  }
+
+  rifle() {
+    if (this.playSample('rifle_shot', 0.62, 1, 1.1)) return;
+    if (this.playSample('gunshot', 0.7, 0.82, 1.2)) return;
+    this.noise(0.26, 1500, 0.6, 0.34, 'lowpass', 1.3);
+    this.tone(78, 0.24, 0.2, 'square', 30);
+    setTimeout(() => this.noise(0.3, 800, 0.8, 0.09, 'lowpass', 0.9), 35);
+  }
+
+  bossRoar() {
+    if (this.playSample('zombie_scream', 0.8, 0.55, 2.6)) return;
+    this.tone(62, 0.9, 0.12, 'sawtooth', 32);
+    this.noise(0.8, 300, 0.8, 0.08, 'lowpass', 0.6);
+  }
+
+  bossNova() {
+    if (this.playSample('zombie_crowd', 0.65, 0.72, 2.2)) return;
+    this.tone(58, 0.7, 0.14, 'sawtooth', 30);
+    this.noise(0.5, 700, 0.9, 0.1, 'lowpass', 0.8);
   }
 
   bow() {

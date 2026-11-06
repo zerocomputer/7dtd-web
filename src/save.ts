@@ -1,4 +1,5 @@
 import type { ProgressionSave } from './progression';
+import type { ArmorEquipment } from './armor';
 
 export interface SaveVec {
   x: number;
@@ -24,8 +25,13 @@ export interface SaveData {
   edits: [number, number, number, number][];
   kills: number;
   pois?: [string, number, number][];
+  /** Individually killed POI residents: [poiId, index]. */
+  poiKilled?: [string, number][];
+  /** Street horde kills per town: [townKey, count]. */
+  streetKills?: [string, number][];
   containers?: [string, [string, number][]][];
   progression?: ProgressionSave;
+  armor?: ArmorEquipment;
   timestamp: number;
 }
 
@@ -75,10 +81,13 @@ export function saveInfo(): { day: number; seed: number; time: string } | null {
 }
 
 /* Settings are small and independent from the world save. */
+export type GraphicsQuality = 'low' | 'medium' | 'high';
+
 export interface Settings {
   sensitivity: number;
   volume: number;
   distance: number;
+  quality: GraphicsQuality;
 }
 
 const SETTINGS_KEY = 'rotwood.settings.v1';
@@ -92,12 +101,13 @@ export function loadSettings(): Settings {
         sensitivity: Math.min(2.5, Math.max(0.3, Number(s.sensitivity) || 1)),
         volume: Math.min(1, Math.max(0, Number(s.volume) ?? 0.7)),
         distance: Math.min(7, Math.max(3, Math.round(Number(s.distance) || 5))),
+        quality: s.quality === 'low' || s.quality === 'high' ? s.quality : 'medium',
       };
     }
   } catch {
     /* ignore */
   }
-  return { sensitivity: 1, volume: 0.7, distance: 5 };
+  return { sensitivity: 1, volume: 0.7, distance: 5, quality: 'medium' };
 }
 
 export function writeSettings(s: Settings) {

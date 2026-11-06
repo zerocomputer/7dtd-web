@@ -24,6 +24,13 @@ const KIND_NAMES: Record<string, string> = {
 
 const CARDINALS = ['С', 'СВ', 'В', 'ЮВ', 'Ю', 'ЮЗ', 'З', 'СЗ'];
 
+export function streetTargetFor(town: Town): number {
+  // Fixed population per town: killed street zombies never come back, so a
+  // town can eventually be fully cleared. Roughly two street walkers per
+  // building, capped so huge towns do not become a wall of bodies.
+  return Math.max(18, Math.min(36, 12 + town.buildings.length));
+}
+
 export class PoiController {
   private active = new Map<string, { building: BuildingSpec; zombies: Zombie[] }>();
   private streetZombies: Zombie[] = [];
@@ -65,13 +72,13 @@ export class PoiController {
   private updateSpawns(world: World, player: Player, zombies: ZombieManager, cb: PoiCallbacks, day: number) {
     // Drop despawned / dead entries.
     for (const [id, entry] of this.active) {
-      entry.zombies = entry.zombies.filter((z) => !z.dead && z.group.parent !== null && z.pos.distanceTo(player.position) < 110);
+      entry.zombies = entry.zombies.filter((z) => !z.dead && z.group.parent !== null && z.pos.distanceTo(player.position) < 70);
       if (entry.zombies.length === 0) {
         this.active.delete(id);
         continue;
       }
       const c = buildingCenter(entry.building);
-      if (Math.hypot(c.x - player.position.x, c.z - player.position.z) > 110 || player.dead) {
+      if (Math.hypot(c.x - player.position.x, c.z - player.position.z) > 70 || player.dead) {
         for (const z of entry.zombies) zombies.removeZombie(z);
         this.active.delete(id);
       }
@@ -80,11 +87,14 @@ export class PoiController {
     if (player.dead) return;
 
     const buildings = world.towns.townsNear(player.position.x, player.position.z, 38)
-      .flatMap((town) => town.buildings);
+      .flatMap((town) => town.buildings)
+      .map((b) => ({ b, c: buildingCenter(b) }))
+      .map(({ b, c }) => ({ b, c, d: Math.hypot(c.x - player.position.x, c.z - player.position.z) }))
+      .filter(({ d }) => d <= 55)
+      .sort((a, b) => a.d - b.d);
 
-    for (const b of buildings) {
-      const c = buildingCenter(b);
-      const dist = Math.hypot(c.x - player.position.x, c.z - player.position.z);
+    for (const { b, c, d: dist } of buildings) {
+      if (this.activeCount() >= 40) break;
       if (dist > 55) continue;
 
       let state = world.poiStates.get(b.id);
@@ -94,8 +104,7 @@ export class PoiController {
       }
       if (state.remaining <= 0) continue;
       if (this.active.has(b.id)) continue;
-      if (this.activeCount() >= 120) continue;
-      if (zombies.aliveCount() >= 190) continue;
+      if (zombies.aliveCount() >= 90) continue;
 
       const chunkX = Math.floor(c.x / 16);
       const chunkZ = Math.floor(c.z / 16);
@@ -126,7 +135,7 @@ export class PoiController {
 
   private updateStreet(world: World, player: Player, zombies: ZombieManager, day: number) {
     this.streetZombies = this.streetZombies.filter((z) =>
-      !z.dead && z.group.parent !== null && z.pos.distanceTo(player.position) < 140,
+      !z.dead && z.group.parent !== null && z.pos.distanceTo(player.position) < 110,
     );
     const nearest = world.towns.nearestTown(player.position.x, player.position.z);
     if (!nearest || nearest.distance > 112) {
@@ -144,12 +153,21 @@ export class PoiController {
     }
     if (player.dead) return;
 
-    const target = Math.min(36, 22 + day * 2);
-    let alive = this.streetZombies.filter((z) => !z.dead).length;
-    if (alive >= target || zombies.aliveCount() >= 210) return;
+    const killed = world.streetKillCount(key);
+    const remainingTarget = Math.max(0, streetTargetFor(town) - killed);
+    if (remainingTarget <= 0) {
+      // The street horde of this town has been wiped out for good.
+      for (const z of this.streetZombies) zombies.removeZombie(z);
+      this.streetZombies = [];
+      return;
+    }
 
-    let spawned = 0;
-    for (let attempt = 0; attempt < 12 && alive < target && spawned < 3; attempt++) {
+    let alive = this.streetZombies.filter((z) => !z.dead).length;
+    if (alive >= remainingTarget || zombies.aliveCount() >= 120) return;
+
+    // Fill the street horde in one pass. Spawning 3 per tick would look like
+    // respawning right after the player kills someone.
+    for (let attempt = 0; attempt < 120 && alive < remainingTarget; attempt++) {
       const angle = Math.random() * Math.PI * 2;
       const radius = 8 + Math.random() * 44;
       const x = Math.round(town.cx + Math.cos(angle) * radius);
@@ -166,7 +184,6 @@ export class PoiController {
       zed.poiIndex = -1;
       this.streetZombies.push(zed);
       alive++;
-      spawned++;
     }
   }
 
@@ -209,8 +226,9 @@ export class PoiController {
         if (st && st.remaining <= 0) cleared++;
       }
       const total = nearest.town.buildings.length;
+      const streetCleared = world.streetKillCount(key) >= streetTargetFor(nearest.town);
       cb.onHint(
-        cleared >= total && total > 0
+        cleared >= total && total > 0 && streetCleared
           ? `ГОРОД ЗАЧИЩЕН · ${total}/${total}`
           : `ГОРОД · ЗАЧИЩЕНО ${cleared}/${total}`,
       );

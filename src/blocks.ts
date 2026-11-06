@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { mulberry32, noise2 } from './noise';
+import { ARMOR_DEFS, ARMOR_SLOTS } from './armor';
 
 /* ------------------------------------------------------------------ */
 /*  Block ids                                                          */
@@ -44,7 +45,7 @@ export enum Block {
 }
 
 export type ContainerKind = 'crate' | 'cabinet' | 'safe' | 'fridge' | 'trash' | 'medcab' | 'car';
-export type ToolKind = 'axe' | 'pickaxe' | 'club' | 'bat' | 'machete' | 'steelaxe' | 'steelpick' | 'pistol' | 'bow';
+export type ToolKind = 'axe' | 'pickaxe' | 'club' | 'bat' | 'machete' | 'steelaxe' | 'steelpick' | 'pistol' | 'bow' | 'rifle';
 export type MaterialKind = 'dirt' | 'stone' | 'wood' | 'leaves' | 'sand' | 'glass' | 'water' | 'snow' | 'ore' | 'metal';
 
 export interface BlockDef {
@@ -966,12 +967,13 @@ export const TOOLS: Record<string, ToolStats> = {
   steelpick: { speedWood: 1.4, speedStone: 6.8, speedDirt: 1.6, speedOre: 6.6, damage: 22, cooldown: 0.52, label: 'Стальная кирка' },
   pistol: { speedWood: 1, speedStone: 1, speedDirt: 1, speedOre: 1, damage: 55, cooldown: 0.48, label: 'Пистолет' },
   bow: { speedWood: 1, speedStone: 1, speedDirt: 1, speedOre: 1, damage: 38, cooldown: 0.9, label: 'Лук' },
+  rifle: { speedWood: 1, speedStone: 1, speedDirt: 1, speedOre: 1, damage: 92, cooldown: 0.85, label: 'Винтовка' },
 };
 
 export interface ItemDef {
   id: ItemId;
   name: string;
-  kind: 'block' | 'tool' | 'material' | 'consumable';
+  kind: 'block' | 'tool' | 'material' | 'consumable' | 'armor';
   block?: Block;
   tool?: ToolKind;
   icon: string;
@@ -1224,6 +1226,40 @@ function makeToolIcon(tool: ToolKind): string {
     ctx.beginPath(); ctx.moveTo(44, 17); ctx.lineTo(48, 23); ctx.lineTo(40, 23); ctx.closePath(); ctx.fill();
     ctx.fillStyle = '#8b6338';
     ctx.fillRect(30, 36, 3, 10);
+  } else if (tool === 'rifle') {
+    // long low-poly rifle, diagonal
+    ctx.strokeStyle = outline;
+    ctx.lineWidth = 10;
+    ctx.beginPath(); ctx.moveTo(12, 56); ctx.lineTo(54, 14); ctx.stroke();
+    ctx.strokeStyle = '#5a3f26';
+    ctx.lineWidth = 7;
+    ctx.beginPath(); ctx.moveTo(12, 56); ctx.lineTo(30, 38); ctx.stroke();
+    ctx.strokeStyle = '#2f3336';
+    ctx.lineWidth = 5;
+    ctx.beginPath(); ctx.moveTo(28, 40); ctx.lineTo(56, 12); ctx.stroke();
+    ctx.strokeStyle = '#7d8588';
+    ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.moveTo(28, 39); ctx.lineTo(56, 11); ctx.stroke();
+    // stock
+    ctx.fillStyle = outline;
+    ctx.beginPath();
+    ctx.moveTo(8, 58); ctx.lineTo(18, 60); ctx.lineTo(26, 50); ctx.lineTo(16, 47);
+    ctx.closePath(); ctx.fill();
+    ctx.fillStyle = '#6d4a2a';
+    ctx.beginPath();
+    ctx.moveTo(10, 57); ctx.lineTo(17, 58); ctx.lineTo(24, 50); ctx.lineTo(17, 48);
+    ctx.closePath(); ctx.fill();
+    // magazine
+    ctx.fillStyle = '#232627';
+    ctx.fillRect(35, 37, 9, 5);
+    // scope
+    ctx.fillStyle = '#1f2324';
+    ctx.fillRect(38, 20, 14, 4);
+    ctx.fillStyle = '#aab0ad';
+    ctx.fillRect(40, 21, 9, 1.6);
+    // muzzle
+    ctx.fillStyle = '#171a1b';
+    ctx.fillRect(54, 8, 6, 5);
   } else {
     // club
     ctx.fillStyle = outline;
@@ -1249,6 +1285,83 @@ function makeToolIcon(tool: ToolKind): string {
   }
   const url = c.toDataURL();
   toolIconCache.set(tool, url);
+  return url;
+}
+
+const armorIconCache = new Map<string, string>();
+
+function makeArmorIcon(slot: 'helmet' | 'chest' | 'legs' | 'boots'): string {
+  const cached = armorIconCache.get(slot);
+  if (cached) return cached;
+  const [c, ctx] = makeCanvas(64);
+  ctx.lineJoin = 'round';
+  ctx.lineCap = 'round';
+  const steel = '#8f979b';
+  const steelDark = '#5b6266';
+  const steelLight = 'rgba(226,232,230,0.75)';
+  const outline = 'rgba(22,26,26,0.9)';
+  if (slot === 'helmet') {
+    ctx.fillStyle = outline;
+    ctx.beginPath(); ctx.arc(32, 34, 19, Math.PI, 0); ctx.lineTo(51, 44); ctx.lineTo(13, 44); ctx.closePath(); ctx.fill();
+    ctx.fillStyle = steel;
+    ctx.beginPath(); ctx.arc(32, 34, 16, Math.PI, 0); ctx.lineTo(48, 41); ctx.lineTo(16, 41); ctx.closePath(); ctx.fill();
+    ctx.fillStyle = steelDark;
+    ctx.fillRect(16, 41, 32, 4);
+    ctx.fillStyle = '#2a3032';
+    ctx.fillRect(24, 30, 16, 5);
+    ctx.fillStyle = steelLight;
+    ctx.fillRect(22, 27, 4, 10);
+  } else if (slot === 'chest') {
+    ctx.fillStyle = outline;
+    ctx.beginPath();
+    ctx.moveTo(18, 12); ctx.lineTo(46, 12); ctx.lineTo(54, 22); ctx.lineTo(50, 52);
+    ctx.lineTo(14, 52); ctx.lineTo(10, 22); ctx.closePath(); ctx.fill();
+    ctx.fillStyle = steel;
+    ctx.beginPath();
+    ctx.moveTo(20, 15); ctx.lineTo(44, 15); ctx.lineTo(50, 24); ctx.lineTo(47, 49);
+    ctx.lineTo(17, 49); ctx.lineTo(14, 24); ctx.closePath(); ctx.fill();
+    ctx.fillStyle = steelDark;
+    ctx.fillRect(12, 22, 8, 5); ctx.fillRect(44, 22, 8, 5);
+    ctx.fillStyle = '#2b3133';
+    ctx.fillRect(28, 15, 8, 34);
+    ctx.fillStyle = steelLight;
+    ctx.fillRect(22, 18, 3, 28);
+    ctx.fillStyle = '#3d4446';
+    ctx.fillRect(22, 34, 8, 4); ctx.fillRect(34, 34, 8, 4);
+  } else if (slot === 'legs') {
+    ctx.fillStyle = outline;
+    ctx.beginPath();
+    ctx.moveTo(17, 10); ctx.lineTo(47, 10); ctx.lineTo(45, 32); ctx.lineTo(42, 55);
+    ctx.lineTo(33, 55); ctx.lineTo(32, 34); ctx.lineTo(31, 55); ctx.lineTo(22, 55);
+    ctx.lineTo(19, 32); ctx.closePath(); ctx.fill();
+    ctx.fillStyle = '#3e4a3c';
+    ctx.beginPath();
+    ctx.moveTo(19, 13); ctx.lineTo(45, 13); ctx.lineTo(43, 32); ctx.lineTo(40, 52);
+    ctx.lineTo(35, 52); ctx.lineTo(33, 31); ctx.lineTo(31, 52); ctx.lineTo(24, 52);
+    ctx.lineTo(21, 32); ctx.closePath(); ctx.fill();
+    ctx.fillStyle = 'rgba(142,158,128,0.5)';
+    ctx.fillRect(26, 16, 3, 30); ctx.fillRect(37, 16, 3, 28);
+    ctx.fillStyle = '#262b25';
+    ctx.fillRect(19, 30, 26, 4);
+  } else {
+    ctx.fillStyle = outline;
+    ctx.fillRect(12, 20, 16, 34); ctx.fillRect(36, 20, 16, 34);
+    ctx.fillRect(12, 46, 22, 8); ctx.fillRect(32, 46, 20, 8);
+    ctx.fillStyle = '#3a2c20';
+    ctx.fillRect(14, 22, 12, 26); ctx.fillRect(38, 22, 12, 26);
+    ctx.fillStyle = '#24201b';
+    ctx.fillRect(12, 46, 18, 7); ctx.fillRect(34, 46, 18, 7);
+    ctx.fillStyle = '#6d533a';
+    ctx.fillRect(18, 26, 3, 16); ctx.fillRect(42, 26, 3, 16);
+    ctx.strokeStyle = 'rgba(180,170,150,0.4)';
+    ctx.lineWidth = 1;
+    for (let i = 0; i < 4; i++) {
+      ctx.beginPath(); ctx.moveTo(15, 28 + i * 5); ctx.lineTo(25, 28 + i * 5); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(39, 28 + i * 5); ctx.lineTo(49, 28 + i * 5); ctx.stroke();
+    }
+  }
+  const url = c.toDataURL();
+  armorIconCache.set(slot, url);
   return url;
 }
 
@@ -1487,6 +1600,25 @@ function lootIcon(kind: string): string {
     ctx.strokeStyle = 'rgba(225,225,215,0.5)';
     ctx.lineWidth = 1;
     ctx.beginPath(); ctx.moveTo(18, 47); ctx.lineTo(44, 19); ctx.stroke();
+  } else if (kind === 'rifleammo') {
+    ctx.fillStyle = 'rgba(38,30,20,0.9)';
+    ctx.beginPath(); ctx.roundRect(10, 26, 44, 20, 2); ctx.fill();
+    ctx.fillStyle = '#4d4a2c';
+    ctx.beginPath(); ctx.roundRect(12, 28, 40, 16, 1); ctx.fill();
+    for (let i = 0; i < 4; i++) {
+      const x = 15 + i * 9;
+      ctx.fillStyle = '#c2a34d';
+      ctx.fillRect(x, 14, 6, 15);
+      ctx.fillStyle = '#e0c883';
+      ctx.beginPath();
+      ctx.moveTo(x, 14); ctx.lineTo(x + 3, 9); ctx.lineTo(x + 6, 14); ctx.closePath(); ctx.fill();
+      ctx.fillStyle = '#8f7534';
+      ctx.fillRect(x, 27, 6, 2);
+    }
+    ctx.fillStyle = '#d9d3b8';
+    ctx.font = 'bold 7px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText('7.62', 32, 40);
   } else if (kind === 'junkcan') {
     ctx.fillStyle = '#8f918c';
     ctx.beginPath();
@@ -1567,6 +1699,24 @@ export function initItems() {
     id: 'tool:bow', name: 'Лук', kind: 'tool', tool: 'bow',
     icon: makeToolIcon('bow'), desc: 'Стреляет стрелами · ЛКМ — выстрел',
   });
+  itemDefs.set('tool:rifle', {
+    id: 'tool:rifle', name: 'Винтовка', kind: 'tool', tool: 'rifle',
+    icon: makeToolIcon('rifle'), desc: 'Патроны 7.62 · урон 92 · ЛКМ — выстрел',
+  });
+  itemDefs.set('mat:rifleammo', {
+    id: 'mat:rifleammo', name: 'Патроны 7.62', kind: 'material',
+    icon: lootIcon('rifleammo'), desc: 'Боеприпас для винтовки',
+  });
+  for (const slot of ARMOR_SLOTS) {
+    const def = ARMOR_DEFS[slot];
+    itemDefs.set(def.item, {
+      id: def.item,
+      name: def.name,
+      kind: 'armor',
+      icon: makeArmorIcon(slot),
+      desc: `${def.buff} · броня ${Math.round(def.reduction * 100)}%`,
+    });
+  }
   itemDefs.set('mat:stick', {
     id: 'mat:stick', name: 'Палки', kind: 'material',
     icon: drawMaterialIcon('stick'), desc: 'Основа для инструментов',
@@ -1812,6 +1962,69 @@ export const RECIPES: Recipe[] = [
       { item: 'mat:tape', count: 1 },
     ],
     hint: 'Скорость: камень ×6.8',
+  },
+  {
+    id: 'rifle',
+    name: 'Винтовка',
+    out: { item: 'tool:rifle', count: 1 },
+    req: [
+      { item: 'mat:scrap', count: 12 },
+      { item: blockItemId(Block.Planks), count: 4 },
+      { item: 'mat:tape', count: 2 },
+    ],
+    hint: 'Урон 92 · патроны 7.62',
+  },
+  {
+    id: 'rifleammo',
+    name: 'Патроны 7.62',
+    out: { item: 'mat:rifleammo', count: 6 },
+    req: [
+      { item: 'mat:scrap', count: 2 },
+      { item: 'mat:coal', count: 1 },
+    ],
+    hint: 'Боеприпас для винтовки',
+  },
+  {
+    id: 'armorHelmet',
+    name: 'Стальная каска',
+    out: { item: 'armor:helmet', count: 1 },
+    req: [
+      { item: 'mat:scrap', count: 4 },
+      { item: 'mat:cloth', count: 2 },
+    ],
+    hint: '+5% опыта · 8% брони',
+  },
+  {
+    id: 'armorChest',
+    name: 'Бронежилет',
+    out: { item: 'armor:chest', count: 1 },
+    req: [
+      { item: 'mat:scrap', count: 8 },
+      { item: 'mat:cloth', count: 4 },
+      { item: 'mat:tape', count: 2 },
+    ],
+    hint: '+8 здоровья · 20% брони',
+  },
+  {
+    id: 'armorLegs',
+    name: 'Тактические штаны',
+    out: { item: 'armor:legs', count: 1 },
+    req: [
+      { item: 'mat:scrap', count: 6 },
+      { item: 'mat:cloth', count: 3 },
+    ],
+    hint: '+5% скорости · 10% брони',
+  },
+  {
+    id: 'armorBoots',
+    name: 'Берцы',
+    out: { item: 'armor:boots', count: 1 },
+    req: [
+      { item: 'mat:scrap', count: 4 },
+      { item: 'mat:cloth', count: 2 },
+      { item: 'mat:tape', count: 1 },
+    ],
+    hint: '−25% урона от падения · 6% брони',
   },
 ];
 

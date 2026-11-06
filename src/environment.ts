@@ -20,7 +20,7 @@ export class Environment {
 
   hour = 12;
   day = 1;
-  dayLength = 720; // seconds for a full 24h cycle
+  dayLength = 1800; // seconds for a full 24h cycle (30 real minutes)
   isNight = false;
 
   private sky: THREE.Mesh;
@@ -48,7 +48,7 @@ export class Environment {
 
     this.sunLight = new THREE.DirectionalLight(0xe6d3b3, 1.08);
     this.sunLight.castShadow = true;
-    this.sunLight.shadow.mapSize.set(2048, 2048);
+    this.sunLight.shadow.mapSize.set(1024, 1024);
     this.sunLight.shadow.camera.left = -52;
     this.sunLight.shadow.camera.right = 52;
     this.sunLight.shadow.camera.top = 52;
@@ -149,6 +149,14 @@ export class Environment {
 
   setUnderwater(v: boolean) {
     this.underwater = v;
+  }
+
+  setShadowQuality(size: number) {
+    if (this.sunLight.shadow.mapSize.x === size) return;
+    this.sunLight.shadow.map?.dispose();
+    this.sunLight.shadow.map = null;
+    this.sunLight.shadow.mapSize.set(size, size);
+    this.sunLight.shadow.needsUpdate = true;
   }
 
   setRenderDistance(chunks: number) {

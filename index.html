@@ -82,6 +82,12 @@
           <div class="nb-sub">Они уже идут за тобой</div>
         </div>
 
+        <div id="boss-banner" class="hidden">
+          <div class="bb-kicker">ОНО ИДЁТ ЗА ТОБОЙ</div>
+          <div class="bb-title" id="boss-banner-title">МАТКА ГНИЛИ</div>
+          <div class="bb-sub" id="boss-banner-sub">Она уже почуяла тебя</div>
+        </div>
+
         <div id="hint"></div>
 
         <div id="hotbar">
@@ -98,51 +104,50 @@
       </div>
 
       <div id="craft" class="overlay hidden">
-        <div class="inv-window">
-          <div class="inv-head">
+        <div class="mc-window">
+          <div class="mc-head">
             <div>
-              <div class="eyebrow">СНАРЯЖЕНИЕ · РЮКЗАК · КРАФТ</div>
-              <h2>Инвентарь</h2>
+              <div class="eyebrow">ИНВЕНТАРЬ</div>
+              <h2>Выживший</h2>
             </div>
-            <div class="inv-head-actions">
+            <div class="mc-head-actions">
               <div id="inv-level" class="inv-level">УРОВЕНЬ 1</div>
               <button id="craft-close" class="btn ghost">E · Закрыть</button>
             </div>
           </div>
-          <div class="inv-cols">
-            <aside class="inv-player">
-              <div class="side-title">ВЫЖИВШИЙ</div>
-              <div class="inv-portrait">
-                <div class="inv-portrait-head"></div>
-                <div class="inv-portrait-body"></div>
-                <div class="inv-portrait-ring"></div>
+          <div class="mc-cols">
+            <aside class="mc-side">
+              <div class="mc-portrait">
+                <div class="mc-portrait-head"></div>
+                <div class="mc-portrait-body"></div>
+                <div class="mc-portrait-legs"></div>
+                <div class="mc-portrait-shadow"></div>
               </div>
-              <div class="inv-stats" id="inv-stats"></div>
-              <div class="side-title">СНАРЯЖЕНИЕ</div>
-              <div class="equip-grid">
-                <div class="equip-slot" title="Голова"><span>ГОЛОВА</span></div>
-                <div class="equip-slot" title="Куртка"><span>КУРТКА</span></div>
-                <div class="equip-slot" title="Штаны"><span>ШТАНЫ</span></div>
-                <div class="equip-slot" title="Обувь"><span>ОБУВЬ</span></div>
-                <div class="equip-slot wide" title="Оружие"><span>ОРУЖИЕ</span></div>
-                <div class="equip-slot wide" title="Резерв"><span>РЕЗЕРВ</span></div>
+              <div class="mc-label">БРОНЯ <span id="inv-armor-total">0%</span></div>
+              <div class="mc-armor" id="armor-slots">
+                <div class="mc-armor-slot" data-armor="helmet"><span class="mc-armor-hint">ШЛЕМ</span></div>
+                <div class="mc-armor-slot" data-armor="chest"><span class="mc-armor-hint">БРОНЯ</span></div>
+                <div class="mc-armor-slot" data-armor="legs"><span class="mc-armor-hint">ШТАНЫ</span></div>
+                <div class="mc-armor-slot" data-armor="boots"><span class="mc-armor-hint">БЕРЦЫ</span></div>
               </div>
-              <div class="inv-xp-wrap">
-                <div class="inv-xp-label"><span>ОПЫТ</span><span id="inv-xp-text">0 / 100</span></div>
-                <div class="inv-xp-bar"><div id="inv-xp-fill"></div></div>
+              <div class="mc-buffs" id="inv-buffs"></div>
+              <div class="mc-stats" id="inv-stats"></div>
+              <div class="mc-xp-wrap">
+                <div class="mc-xp-label"><span>ОПЫТ</span><span id="inv-xp-text">0 / 100</span></div>
+                <div class="mc-xp-bar"><div id="inv-xp-fill"></div></div>
               </div>
             </aside>
-            <section class="inv-bag">
-              <div class="side-title">РЮКЗАК <span id="inv-capacity">0 / 30</span></div>
-              <div id="inventory-grid" class="inv-grid"></div>
-              <div class="side-title inv-hotbar-title">ХОТБАР</div>
-              <div id="inv-hotbar" class="inv-hotbar"></div>
-              <div class="inv-hint">ЛКМ по предмету — назначить в выбранный слот хотбара. E / Esc — закрыть.</div>
+            <section class="mc-main">
+              <div class="mc-label">ИНВЕНТАРЬ <span id="inv-capacity">0 / 27</span></div>
+              <div id="inventory-grid" class="mc-grid"></div>
+              <div class="mc-label mc-hotbar-title">ХОТБАР</div>
+              <div id="inv-hotbar" class="mc-hotbar"></div>
+              <div class="mc-hint">ЛКМ по предмету — надеть броню или назначить в выбранный слот. ЛКМ по слоту брони — снять. E / Esc — закрыть.</div>
             </section>
-            <aside class="inv-craft">
-              <div class="side-title">КРАФТ</div>
+            <aside class="mc-craft">
+              <div class="mc-label">КРАФТ</div>
               <div class="craft-list" id="recipe-list"></div>
-              <div class="craft-tip">Добывайте блоки и обыскивайте здания. Крафт доступен сразу — верстак не нужен.</div>
+              <div class="craft-tip">Броня: каска, бронежилет, штаны, берцы. Полный комплект даёт «Адреналин». Винтовка — 12 металлолома и патроны 7.62.</div>
             </aside>
           </div>
         </div>
@@ -174,7 +179,11 @@
               <div id="skills-perk-list"></div>
             </section>
           </div>
-          <div class="skills-tip">Опыт дают убийства, добыча, лут, крафт и зачистка зданий. Один уровень — одно очко навыка.</div>
+          <div class="skills-tip">
+            Опыт дают убийства, добыча, лут, крафт и зачистка зданий. Один уровень — одно очко навыка.
+            Ближний бой: сила (+2% за очко) и перк «Мясник» (+12% за уровень). Пистолет и лук: восприятие (+2% за очко) и перк «Стрелок» (+12% за уровень).
+            Сначала поднимите атрибут до требования перка, затем вкладывайте очки в перк.
+          </div>
         </div>
       </div>
 
@@ -297,6 +306,13 @@
             </label>
             <label>ДАЛЬНОСТЬ ВИДИМОСТИ <span id="dist-value">5</span>
               <input id="dist" type="range" min="3" max="7" step="1" value="5" />
+            </label>
+            <label>ГРАФИКА
+              <select id="quality">
+                <option value="low">НИЗКАЯ · БЕЗ ТЕНЕЙ</option>
+                <option value="medium">СРЕДНЯЯ</option>
+                <option value="high">ВЫСОКАЯ</option>
+              </select>
             </label>
           </div>
           <div class="pause-actions">

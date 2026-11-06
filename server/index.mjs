@@ -9,7 +9,7 @@ const PORT = Number(process.env.WS_PORT || process.env.PORT || 5190);
 const DATA_FILE = process.env.ROOMS_FILE || fileURLToPath(new URL('./rooms.json', import.meta.url));
 const STATIC_ROOT = fileURLToPath(new URL('../dist', import.meta.url));
 const MAX_PLAYERS = 16;
-const DAY_LENGTH = 720;
+const DAY_LENGTH = Number(process.env.DAY_LENGTH) > 0 ? Number(process.env.DAY_LENGTH) : 1800;
 const COLORS = ['#e8a33d', '#7fb3ff', '#8bd17c', '#e07a9a', '#c9a0ff', '#ffd166', '#6ed6c9', '#ff9f6e'];
 
 const MIME = {
@@ -40,7 +40,8 @@ let lastHealthLog = 0;
 /*
  * Room shape:
  *  seed, players Map, edits Map, looted Set, poiKills Set, pois Map,
- *  baseDay, baseHour, epoch (null while the room is empty/frozen), createdAt
+ *  streetKills Map (town -> kills), baseDay, baseHour, epoch (null while the
+ *  room is empty/frozen), createdAt
  */
 
 function makeRoom(id, seed) {
@@ -52,6 +53,7 @@ function makeRoom(id, seed) {
     looted: new Set(),
     poiKills: new Set(),
     pois: new Map(),
+    streetKills: new Map(),
     baseDay: 1,
     baseHour: 12,
     epoch: null,
@@ -123,6 +125,7 @@ function serializeRoom(room) {
     looted: [...room.looted],
     poiKills: [...room.poiKills],
     pois: [...room.pois.entries()],
+    streetKills: [...room.streetKills.entries()],
   };
 }
 
@@ -171,6 +174,12 @@ function loadRooms() {
       }
       for (const key of raw.looted ?? []) if (typeof key === 'string') room.looted.add(key);
       for (const key of raw.poiKills ?? []) if (typeof key === 'string') room.poiKills.add(key);
+      for (const entry of raw.streetKills ?? []) {
+        if (!Array.isArray(entry) || entry.length < 2) continue;
+        const key = String(entry[0]);
+        const count = Math.floor(Number(entry[1]) || 0);
+        if (key && count > 0) room.streetKills.set(key, count);
+      }
       for (const entry of raw.pois ?? []) {
         if (!Array.isArray(entry) || entry.length < 3) continue;
         room.pois.set(String(entry[0]), {
@@ -211,7 +220,9 @@ function welcome(room, player) {
     looted: [...room.looted],
     poiKills: [...room.poiKills],
     pois: [...room.pois.entries()],
+    streetKills: [...room.streetKills.entries()],
     time,
+    dayLength: DAY_LENGTH,
   };
 }
 
@@ -448,6 +459,16 @@ wss.on('connection', (ws, req) => {
         remaining: next.remaining,
         total: next.total,
       }, id);
+      scheduleSave();
+      return;
+    }
+
+    if (msg.type === 'streetKill') {
+      const key = typeof msg.key === 'string' ? msg.key.slice(0, 80) : '';
+      if (!key) return;
+      const count = Math.max((room.streetKills.get(key) ?? 0) + 1, Math.floor(Number(msg.count) || 1));
+      room.streetKills.set(key, count);
+      broadcast(room, { type: 'streetKill', key, count }, id);
       scheduleSave();
       return;
     }

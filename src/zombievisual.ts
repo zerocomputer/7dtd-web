@@ -63,9 +63,9 @@ export class ZombieModelLibrary {
     const tintColor = new THREE.Color(tint);
     model.traverse((obj) => {
       if (!(obj instanceof THREE.Mesh)) return;
-      obj.castShadow = true;
-      obj.receiveShadow = true;
-      obj.frustumCulled = false;
+      obj.castShadow = false;
+      obj.receiveShadow = false;
+      obj.frustumCulled = true;
       if (Array.isArray(obj.material)) {
         obj.material = obj.material.map((m) => {
           const clone = m.clone();
@@ -157,6 +157,14 @@ export class ZombieVisual {
     this.oneShot = action;
     this.lock = lock;
     return action;
+  }
+
+  setEmissive(hex: number, intensity: number) {
+    for (const m of this.mats) {
+      m.emissive.setHex(hex);
+      m.emissiveIntensity = intensity;
+      m.needsUpdate = true;
+    }
   }
 
   update(dt: number, speed: number) {

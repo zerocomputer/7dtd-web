@@ -131,6 +131,8 @@ export class World {
   readonly towns: TownGenerator;
   readonly poiStates = new Map<string, { remaining: number; total: number }>();
   readonly poiKills = new Map<string, Set<number>>();
+  /** Street horde kills per town (`cellX:cellZ`). Killed street zombies never respawn. */
+  readonly streetKills = new Map<string, number>();
   readonly containerLoot = new Map<string, LootStack[]>();
   onEdit?: (x: number, y: number, z: number, id: number) => void;
   readonly generatedTorches = new Set<string>();
@@ -388,6 +390,14 @@ export class World {
 
   isPoiKilled(poiId: string, index: number): boolean {
     return this.poiKills.get(poiId)?.has(index) ?? false;
+  }
+
+  addStreetKill(townKey: string, count = 1) {
+    this.streetKills.set(townKey, (this.streetKills.get(townKey) ?? 0) + count);
+  }
+
+  streetKillCount(townKey: string): number {
+    return this.streetKills.get(townKey) ?? 0;
   }
 
   /**

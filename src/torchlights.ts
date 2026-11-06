@@ -25,6 +25,7 @@ export class TorchLights {
   private timer = 0;
   private glowTex: THREE.Texture;
   private scene: THREE.Scene;
+  private limit = 6;
 
   constructor(scene: THREE.Scene, count = 6) {
     this.scene = scene;
@@ -54,16 +55,25 @@ export class TorchLights {
     }
   }
 
+  setLimit(limit: number) {
+    this.limit = Math.max(0, Math.min(this.lights.length, Math.floor(limit)));
+    for (let i = this.limit; i < this.lights.length; i++) {
+      this.lights[i].visible = false;
+      this.sprites[i].visible = false;
+    }
+  }
+
   update(dt: number, world: World, player: THREE.Vector3, darkness: number) {
     this.timer -= dt;
     if (this.timer <= 0) {
       this.timer = 0.35;
-      const torches = world.nearestTorches(player.x, player.y, player.z, this.lights.length, 42);
+      const active = Math.min(this.limit, this.lights.length);
+      const torches = world.nearestTorches(player.x, player.y, player.z, active, 42);
       this.positions = torches.map((t) => new THREE.Vector3(t.x, t.y, t.z));
       for (let i = 0; i < this.lights.length; i++) {
         const light = this.lights[i];
         const sprite = this.sprites[i];
-        if (i < this.positions.length) {
+        if (i < this.limit && i < this.positions.length) {
           const p = this.positions[i];
           light.position.copy(p);
           light.visible = true;
@@ -77,7 +87,7 @@ export class TorchLights {
     }
 
     const t = performance.now() * 0.001;
-    for (let i = 0; i < this.lights.length; i++) {
+    for (let i = 0; i < this.limit; i++) {
       const light = this.lights[i];
       if (!light.visible) continue;
       const flicker = 0.82 + Math.sin(t * 9.1 + i * 2.3) * 0.1 + Math.sin(t * 17.3 + i * 5.1) * 0.06;

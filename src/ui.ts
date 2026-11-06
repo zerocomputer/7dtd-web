@@ -1,6 +1,8 @@
 import { RECIPES, getItem, allItems, blockItemId } from './blocks';
 import { ATTRS, PERKS } from './progression';
 import type { AttrId, PerkId, Progression } from './progression';
+import { ARMOR_DEFS, ARMOR_SLOTS } from './armor';
+import type { ArmorEquipment, ArmorSlot } from './armor';
 
 export interface UICallbacks {
   onNewWorld: (seed: string) => void;
@@ -16,12 +18,15 @@ export interface UICallbacks {
   onUpgradeAttr: (id: AttrId) => void;
   onUpgradePerk: (id: PerkId) => void;
   onSkillsClose: () => void;
+  onEquipArmor: (itemId: string) => void;
+  onUnequipArmor: (slot: ArmorSlot) => void;
   onLootTake: (index: number) => void;
   onLootAll: () => void;
   onLootClose: () => void;
   onSensitivity: (v: number) => void;
   onVolume: (v: number) => void;
   onDistance: (v: number) => void;
+  onQuality: (q: 'low' | 'medium' | 'high') => void;
   onChatSend: (text: string) => void;
   onChatClose: () => void;
 }
@@ -37,6 +42,10 @@ export interface InventoryInfo {
   hunger: number;
   thirst: number;
   poison: number;
+  armor: ArmorEquipment;
+  armorReduction: number;
+  setActive: boolean;
+  adrenaline: boolean;
 }
 
 const COMPASS_NAMES: Record<number, string> = {
@@ -53,8 +62,14 @@ export class UI {
   private toasts = $('toasts');
   private hintTimer = 0;
   private nightBannerTimer = 0;
+  private bossBannerTimer = 0;
   private lastTarget = '';
   private lastHotbarKey = '';
+  private lastStatsKey = '';
+  private lastClockKey = '';
+  private lastHeading = -999;
+  private compassWidth = 0;
+  private compassWindow = 0;
   private hasSave = false;
   private online = false;
   private lastHotbar: (string | null)[] = new Array(9).fill(null);
@@ -152,6 +167,11 @@ export class UI {
       $('dist-value').textContent = dist.value;
       this.cb.onDistance(Number(dist.value));
     });
+    const quality = $('quality') as HTMLSelectElement | null;
+    quality?.addEventListener('change', () => {
+      const value = quality.value;
+      if (value === 'low' || value === 'medium' || value === 'high') this.cb.onQuality(value);
+    });
   }
 
   private buildHotbar() {
@@ -219,35 +239,100 @@ export class UI {
     this.renderInventoryGrid(inventory);
   }
 
+  private stacksFor(inventory: Record<string, number>): { id: string; count: number }[] {
+    const order = { tool: 0, armor: 1, consumable: 2, block: 3, material: 4 };
+    const entries = allItems()
+      .filter((it) => (inventory[it.id] ?? 0) > 0)
+      .sort((a, b) => order[a.kind] - order[b.kind] || a.name.localeCompare(b.name, 'ru'));
+    const stacks: { id: string; count: number }[] = [];
+    for (const it of entries) {
+      const total = inventory[it.id] ?? 0;
+      const max = it.kind === 'tool' || it.kind === 'armor' ? 1 : 64;
+      let left = total;
+      while (left > 0) {
+        const count = Math.min(max, left);
+        stacks.push({ id: it.id, count });
+        left -= count;
+      }
+    }
+    return stacks;
+  }
+
   private renderInventoryGrid(inventory: Record<string, number>) {
     const grid = document.getElementById('inventory-grid');
     if (!grid) return;
     this.lastInventory = inventory;
     grid.innerHTML = '';
-    const entries = allItems()
-      .filter((it) => (inventory[it.id] ?? 0) > 0)
-      .sort((a, b) => {
-        const order = { tool: 0, consumable: 1, block: 2, material: 3 };
-        return order[a.kind] - order[b.kind] || a.name.localeCompare(b.name, 'ru');
-      });
-    const cells = 30;
+    const stacks = this.stacksFor(inventory);
+    const cells = Math.max(27, Math.ceil(stacks.length / 9) * 9);
     for (let i = 0; i < cells; i++) {
       const cell = document.createElement('div');
-      const it = entries[i];
-      if (!it) {
-        cell.className = 'inv-cell';
-        cell.innerHTML = '<span class="inv-empty-mark">·</span>';
+      const stack = stacks[i];
+      if (!stack) {
+        cell.className = 'mc-slot';
       } else {
-        const count = inventory[it.id] ?? 0;
-        cell.className = 'inv-cell filled';
-        cell.title = `${it.name} ×${count}\nЛКМ — назначить в выбранный слот`;
-        cell.innerHTML = `<img src="${it.icon}" alt="" /><span class="inv-count">${count > 1 ? count : ''}</span>`;
-        cell.addEventListener('click', () => this.cb.onAssignItem(it.id));
+        const def = getItem(stack.id);
+        const isArmor = def?.kind === 'armor';
+        cell.className = 'mc-slot filled' + (isArmor ? ' armor' : '');
+        cell.title = isArmor
+          ? `${def?.name}\nЛКМ — надеть`
+          : `${def?.name} ×${stack.count}\nЛКМ — назначить в выбранный слот`;
+        cell.innerHTML = `<img src="${def?.icon ?? ''}" alt="" />${stack.count > 1 ? `<span class="mc-count">${stack.count}</span>` : ''}`;
+        cell.addEventListener('click', () => {
+          if (isArmor) this.cb.onEquipArmor(stack.id);
+          else this.cb.onAssignItem(stack.id);
+        });
       }
       grid.appendChild(cell);
     }
     const cap = document.getElementById('inv-capacity');
-    if (cap) cap.textContent = `${Math.min(entries.length, cells)} / ${cells}`;
+    if (cap) cap.textContent = `${Math.min(stacks.length, cells)} / ${cells}`;
+  }
+
+  private renderArmor(info: InventoryInfo | null) {
+    const wrap = document.getElementById('armor-slots');
+    if (!wrap) return;
+    wrap.innerHTML = '';
+    for (const slot of ARMOR_SLOTS) {
+      const def = ARMOR_DEFS[slot];
+      const equipped = info?.armor[slot] ?? null;
+      const item = equipped ? getItem(equipped) : undefined;
+      const cell = document.createElement('div');
+      cell.className = 'mc-armor-slot' + (equipped ? ' filled' : '');
+      cell.title = equipped
+        ? `${def.name}\n${def.buff}\nЛКМ — снять`
+        : `${def.short} — слот брони`;
+      cell.innerHTML = equipped
+        ? `<img src="${item?.icon ?? ''}" alt="" /><span class="mc-armor-tag">${def.short}</span>`
+        : `<span class="mc-armor-hint">${def.short}</span>`;
+      if (equipped) cell.addEventListener('click', () => this.cb.onUnequipArmor(slot));
+      wrap.appendChild(cell);
+    }
+    const total = document.getElementById('inv-armor-total');
+    if (total) total.textContent = `${Math.round((info?.armorReduction ?? 0) * 100)}%`;
+    this.renderInvBuffs(info);
+  }
+
+  private renderInvBuffs(info: InventoryInfo | null) {
+    const wrap = document.getElementById('inv-buffs');
+    if (!wrap) return;
+    const lines: string[] = [];
+    if (info) {
+      for (const slot of ARMOR_SLOTS) {
+        const def = ARMOR_DEFS[slot];
+        if (info.armor[slot] === def.item) {
+          lines.push(`<div class="mc-buff"><b>${def.name}</b><span>${def.buff}</span></div>`);
+        }
+      }
+      if (info.setActive) {
+        lines.push('<div class="mc-buff set"><b>КОМПЛЕКТ · ПОСЛЕДНИЙ РУБЕЖ</b><span>+8% брони · «Адреналин» ниже 35% HP</span></div>');
+      }
+      if (info.adrenaline) {
+        lines.push('<div class="mc-buff hot">АДРЕНАЛИН · +15% урона</div>');
+      }
+    }
+    if (lines.length === 0) lines.push('<div class="mc-buff muted">Броня не надета</div>');
+    wrap.innerHTML = lines.join('');
   }
 
   private renderInvHotbar(hotbar: (string | null)[], selected: number, inventory: Record<string, number>) {
@@ -256,7 +341,7 @@ export class UI {
     wrap.innerHTML = '';
     for (let i = 0; i < 9; i++) {
       const slot = document.createElement('div');
-      slot.className = 'inv-hot-slot' + (i === selected ? ' selected' : '');
+      slot.className = 'mc-hot-slot' + (i === selected ? ' selected' : '');
       slot.title = `Слот ${i + 1}`;
       const id = hotbar[i];
       const def = id ? getItem(id) : undefined;
@@ -268,6 +353,8 @@ export class UI {
 
   private renderInvStats(info: InventoryInfo) {
     this.lastInfo = info;
+    this.renderArmor(info);
+    this.renderInvBuffs(info);
     const level = document.getElementById('inv-level');
     if (level) level.textContent = `УРОВЕНЬ ${info.level}`;
     const xpText = document.getElementById('inv-xp-text');
@@ -293,7 +380,7 @@ export class UI {
     const entries = allItems()
       .filter((it) => (inventory[it.id] ?? 0) > 0)
       .sort((a, b) => {
-        const order = { tool: 0, consumable: 1, block: 2, material: 3 };
+        const order = { tool: 0, armor: 1, consumable: 2, block: 3, material: 4 };
         return order[a.kind] - order[b.kind] || a.name.localeCompare(b.name, 'ru');
       });
     if (entries.length === 0) {
@@ -304,9 +391,12 @@ export class UI {
       const count = inventory[it.id] ?? 0;
       const row = document.createElement('div');
       row.className = 'inv-item clickable';
-      row.title = 'Назначить в выбранный слот';
+      row.title = it.kind === 'armor' ? 'Надеть' : 'Назначить в выбранный слот';
       row.innerHTML = `<img src="${it.icon}" alt="" /><span>${it.name}</span><span class="cnt">×${count}</span>`;
-      row.addEventListener('click', () => this.cb.onAssignItem(it.id));
+      row.addEventListener('click', () => {
+        if (it.kind === 'armor') this.cb.onEquipArmor(it.id);
+        else this.cb.onAssignItem(it.id);
+      });
       el.appendChild(row);
     }
   }
@@ -500,6 +590,7 @@ export class UI {
     this.renderInvHotbar(hotbar ?? this.lastHotbar, selected ?? this.lastSelected, inventory);
     if (info) this.renderInvStats(info);
     else if (this.lastInfo) this.renderInvStats(this.lastInfo);
+    this.renderArmor(info ?? this.lastInfo);
   }
 
   showSkills(progression: Progression) {
@@ -642,18 +733,28 @@ export class UI {
     thirst: number, maxThirst: number,
     kills: number,
   ) {
+    const hp = Math.ceil(Math.max(0, health));
+    const sp = Math.ceil(Math.max(0, stamina));
+    const food = Math.ceil(Math.max(0, hunger));
+    const water = Math.ceil(Math.max(0, thirst));
+    const key = `${hp}|${sp}|${food}|${water}|${kills}|${Math.round(maxHealth)}|${Math.round(maxStamina)}`;
+    if (key === this.lastStatsKey) return;
+    this.lastStatsKey = key;
     ($('hp-fill') as HTMLElement).style.width = `${Math.max(0, (health / maxHealth) * 100)}%`;
     ($('sp-fill') as HTMLElement).style.width = `${Math.max(0, (stamina / maxStamina) * 100)}%`;
     ($('food-fill') as HTMLElement).style.width = `${Math.max(0, (hunger / maxHunger) * 100)}%`;
     ($('water-fill') as HTMLElement).style.width = `${Math.max(0, (thirst / maxThirst) * 100)}%`;
-    $('hp-value').textContent = String(Math.ceil(Math.max(0, health)));
-    $('sp-value').textContent = String(Math.ceil(Math.max(0, stamina)));
-    $('food-value').textContent = String(Math.ceil(Math.max(0, hunger)));
-    $('water-value').textContent = String(Math.ceil(Math.max(0, thirst)));
+    $('hp-value').textContent = String(hp);
+    $('sp-value').textContent = String(sp);
+    $('food-value').textContent = String(food);
+    $('water-value').textContent = String(water);
     $('kills-label').textContent = `УБИТО: ${kills}`;
   }
 
   updateClock(day: number, time: string, isNight: boolean) {
+    const key = `${day}|${time}|${isNight ? 1 : 0}`;
+    if (key === this.lastClockKey) return;
+    this.lastClockKey = key;
     $('day-label').textContent = `ДЕНЬ ${day}`;
     $('time-label').textContent = time;
     $('day-label').style.color = isNight ? '#ff8e70' : '';
@@ -665,9 +766,14 @@ export class UI {
   updateCompass(yaw: number) {
     let heading = (-yaw * 180 / Math.PI) % 360;
     if (heading < 0) heading += 360;
+    if (window.innerWidth !== this.compassWindow) {
+      this.compassWindow = window.innerWidth;
+      this.compassWidth = ($('compass') as HTMLElement).offsetWidth || 430;
+    }
+    if (Math.abs(heading - this.lastHeading) < 0.08) return;
+    this.lastHeading = heading;
     const idx0 = 12;
-    const containerW = ($('compass') as HTMLElement).offsetWidth || 430;
-    const x = containerW / 2 - 15 - (idx0 * 30 + (heading / 15) * 30);
+    const x = this.compassWidth / 2 - 15 - (idx0 * 30 + (heading / 15) * 30);
     this.compassStrip.style.transform = `translateX(${x}px)`;
   }
 
@@ -710,6 +816,18 @@ export class UI {
     this.nightBannerTimer = window.setTimeout(() => el.classList.add('hidden'), 4200);
   }
 
+  showBossBanner(title: string, sub: string, duration = 5600) {
+    const el = $('boss-banner');
+    $('boss-banner-title').textContent = title;
+    $('boss-banner-sub').textContent = sub;
+    el.classList.remove('hidden');
+    el.style.animation = 'none';
+    void el.offsetWidth;
+    el.style.animation = 'bossIn 0.5s ease both';
+    clearTimeout(this.bossBannerTimer);
+    this.bossBannerTimer = window.setTimeout(() => el.classList.add('hidden'), duration);
+  }
+
   hint(text: string, duration = 4500) {
     const el = $('hint');
     el.textContent = text;
@@ -732,10 +850,12 @@ export class UI {
     }, 2600);
   }
 
-  setSettings(sens: number, vol: number, dist: number) {
+  setSettings(sens: number, vol: number, dist: number, quality: 'low' | 'medium' | 'high' = 'medium') {
     ($('sens') as HTMLInputElement).value = String(sens);
     ($('vol') as HTMLInputElement).value = String(Math.round(vol * 100));
     ($('dist') as HTMLInputElement).value = String(dist);
+    const q = $('quality') as HTMLSelectElement | null;
+    if (q) q.value = quality;
     $('sens-value').textContent = sens.toFixed(1);
     $('vol-value').textContent = String(Math.round(vol * 100));
     $('dist-value').textContent = String(dist);
@@ -748,6 +868,7 @@ export class UI {
       this.buildRecipes(inventory);
       this.renderInvHotbar(this.lastHotbar, this.lastSelected, inventory);
       if (this.lastInfo) this.renderInvStats(this.lastInfo);
+      this.renderArmor(this.lastInfo);
     }
   }
 

@@ -42,6 +42,9 @@ export class Player {
   flashOn = false;
   moveMultiplier = 1;
   sprintMultiplier = 1;
+  armorReduction = 0;
+  fallDamageMultiplier = 1;
+  adrenaline = false;
   hungerRate = 1;
   thirstRate = 1;
   healMultiplier = 1;
@@ -119,6 +122,7 @@ export class Player {
 
   takeDamage(amount: number, silent = false) {
     if (this.dead || this.invulnTimer > 0) return;
+    if (!silent) amount *= Math.max(0, 1 - this.armorReduction);
     this.health = Math.max(0, this.health - amount);
     this.sinceDamage = 0;
     if (!silent) {
@@ -191,6 +195,9 @@ export class Player {
       if (this.staminaDelay <= 0) {
         this.stamina = Math.min(this.maxStamina, this.stamina + 12 * dt);
       }
+    }
+    if (this.adrenaline && this.health > 0 && this.health < this.maxHealth * 0.35) {
+      speed *= 1.1;
     }
     // Backpedalling and strafing are deliberately slower than moving forward.
     if (backing) speed *= this.inWater ? 0.62 : 0.5;
@@ -286,7 +293,7 @@ export class Player {
     } else if (!wasOnGround || fallBefore < 0) {
       const impact = -Math.min(fallBefore, this.fallSpeed);
       if (impact > 16) {
-        const dmg = Math.min(80, (impact - 16) * 5.5);
+        const dmg = Math.min(80, (impact - 16) * 5.5) * this.fallDamageMultiplier;
         this.takeDamage(dmg);
       }
       this.fallSpeed = 0;

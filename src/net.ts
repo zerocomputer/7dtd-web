@@ -24,8 +24,10 @@ interface WelcomeMessage {
   edits: [number, number, number, number][];
   looted: string[];
   poiKills: string[];
+  streetKills: [string, number][];
   pois: [string, { remaining: number; total: number }][];
   time: { day: number; hour: number };
+  dayLength?: number;
 }
 
 export type NetChatMessage = {
@@ -75,9 +77,11 @@ export class NetClient {
   edits = new Map<string, number>();
   looted = new Set<string>();
   poiKills = new Set<string>();
+  streetKills = new Map<string, number>();
   pois = new Map<string, { remaining: number; total: number }>();
   day = 1;
   hour = 12;
+  dayLength = 1800;
   spawnAt: { x: number; y: number; z: number } | null = null;
   lastError = '';
 
@@ -88,6 +92,7 @@ export class NetClient {
   onEdit?: (x: number, y: number, z: number, id: number) => void;
   onLooted?: (key: string) => void;
   onPoiKill?: (id: string, index: number, remaining: number, total: number) => void;
+  onStreetKill?: (townKey: string, count: number) => void;
   onChat?: (message: NetChatMessage) => void;
   onTime?: (day: number, hour: number) => void;
   onStatus?: (status: NetStatus, text: string, count: number) => void;
@@ -228,6 +233,14 @@ export class NetClient {
             }
             this.looted = new Set((w.looted ?? []).filter((k) => typeof k === 'string'));
             this.poiKills = new Set((w.poiKills ?? []).filter((k) => typeof k === 'string'));
+            this.streetKills.clear();
+            for (const entry of w.streetKills ?? []) {
+              if (!Array.isArray(entry) || entry.length < 2) continue;
+              const [key, count] = entry;
+              if (typeof key === 'string' && Number(count) > 0) {
+                this.streetKills.set(key, Math.floor(Number(count)));
+              }
+            }
             this.pois.clear();
             for (const entry of w.pois ?? []) {
               if (!Array.isArray(entry) || entry.length < 2) continue;
@@ -240,6 +253,7 @@ export class NetClient {
             }
             this.day = Math.max(1, Number(w.time?.day) || 1);
             this.hour = Number(w.time?.hour) || 12;
+            this.dayLength = Number(w.dayLength) > 0 ? Number(w.dayLength) : 1800;
             this.spawnAt = null;
             for (const p of this.players.values()) {
               if (p.state) {
@@ -320,6 +334,14 @@ export class NetClient {
             const total = Math.max(0, Number(data.total) || 0);
             this.pois.set(id, { remaining, total });
             this.onPoiKill?.(id, index, remaining, total);
+            break;
+          }
+          case 'streetKill': {
+            const key = String(data.key ?? '');
+            if (!key) break;
+            const count = Math.max(1, Number(data.count) || 1);
+            this.streetKills.set(key, count);
+            this.onStreetKill?.(key, count);
             break;
           }
           case 'chat': {
@@ -433,6 +455,13 @@ export class NetClient {
   sendPoiKill(id: string, index: number, remaining: number, total: number) {
     if (!this.connected) return;
     this.send({ type: 'poiKill', id, index, remaining, total });
+  }
+
+  sendStreetKill(townKey: string) {
+    if (!this.connected) return;
+    const count = (this.streetKills.get(townKey) ?? 0) + 1;
+    this.streetKills.set(townKey, count);
+    this.send({ type: 'streetKill', key: townKey, count });
   }
 
   sendChat(text: string) {

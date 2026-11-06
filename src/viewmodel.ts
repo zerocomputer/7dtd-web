@@ -76,6 +76,7 @@ export class ViewModel {
         else if (def.tool === 'bat') this.holder.add(this.makeBat());
         else if (def.tool === 'machete') this.holder.add(this.makeMachete());
         else if (def.tool === 'pistol') this.holder.add(this.makePistol());
+        else if (def.tool === 'rifle') this.holder.add(this.makeRifle());
         else if (def.tool === 'bow') this.holder.add(this.makeBow());
         else this.holder.add(this.makeSticks());
       }
@@ -269,6 +270,58 @@ export class ViewModel {
     trigger.position.set(0.02, 0.13, 0);
     g.add(trigger);
     g.rotation.set(0.1, -0.12, 0);
+    return g;
+  }
+
+  private makeRifle(): THREE.Group {
+    const g = new THREE.Group();
+    // receiver
+    const receiver = new THREE.Mesh(new THREE.BoxGeometry(0.42, 0.07, 0.07), stoneDarkMat);
+    receiver.position.set(0.12, 0.2, 0);
+    g.add(receiver);
+    const rail = new THREE.Mesh(new THREE.BoxGeometry(0.34, 0.014, 0.05), steelMat);
+    rail.position.set(0.13, 0.24, 0);
+    g.add(rail);
+    // long barrel
+    const barrel = new THREE.Mesh(new THREE.CylinderGeometry(0.018, 0.022, 0.55, 8), steelMat);
+    barrel.rotation.z = Math.PI / 2;
+    barrel.position.set(0.56, 0.205, 0);
+    g.add(barrel);
+    const muzzle = new THREE.Mesh(new THREE.CylinderGeometry(0.03, 0.026, 0.07, 8), stoneDarkMat);
+    muzzle.rotation.z = Math.PI / 2;
+    muzzle.position.set(0.85, 0.205, 0);
+    g.add(muzzle);
+    // wooden stock
+    const stock = new THREE.Mesh(new THREE.BoxGeometry(0.34, 0.1, 0.075), darkWoodMat);
+    stock.position.set(-0.2, 0.15, 0);
+    stock.rotation.z = -0.13;
+    g.add(stock);
+    const butt = new THREE.Mesh(new THREE.BoxGeometry(0.07, 0.16, 0.08), woodMat);
+    butt.position.set(-0.36, 0.11, 0);
+    butt.rotation.z = -0.13;
+    g.add(butt);
+    // grip and magazine
+    const grip = new THREE.Mesh(new THREE.BoxGeometry(0.07, 0.18, 0.075), darkWoodMat);
+    grip.position.set(-0.03, 0.08, 0);
+    grip.rotation.z = 0.2;
+    g.add(grip);
+    const magazine = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.16, 0.06), stoneDarkMat);
+    magazine.position.set(0.12, 0.09, 0);
+    magazine.rotation.z = 0.12;
+    g.add(magazine);
+    // scope
+    const scope = new THREE.Mesh(new THREE.CylinderGeometry(0.032, 0.032, 0.22, 10), stoneDarkMat);
+    scope.rotation.z = Math.PI / 2;
+    scope.position.set(0.16, 0.29, 0);
+    g.add(scope);
+    const lens = new THREE.Mesh(new THREE.CylinderGeometry(0.026, 0.026, 0.012, 10), steelMat);
+    lens.rotation.z = Math.PI / 2;
+    lens.position.set(0.28, 0.29, 0);
+    g.add(lens);
+    const trigger = new THREE.Mesh(new THREE.BoxGeometry(0.02, 0.06, 0.03), stoneDarkMat);
+    trigger.position.set(0.0, 0.13, 0);
+    g.add(trigger);
+    g.rotation.set(0.06, -0.1, 0);
     return g;
   }
 

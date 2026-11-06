@@ -49,6 +49,7 @@ All sound effects are downloaded from **Freesound** and released under **Creativ
 - `zombie_death.mp3` — *Zombie Death 1.wav* by **tonsil5** — https://freesound.org/s/555412/
 - `zombie_crowd.mp3` — *Crowd Of Zombies Groaning* by **LegoCustomZone** — https://freesound.org/s/764032/
 - `gunshot.mp3` — *Single Pistol Gunshot 3.wav* by **morganpurkis** — https://freesound.org/s/385811/
+- `rifle_shot.mp3` — *Rifle gunshot, one shot* by **felix.blume** — https://freesound.org/s/710084/
 - `bow_release.mp3` — *Bow Release (Bow and Arrow) 4* by **Ali_6868** — https://freesound.org/s/384917/
 - `arrow_hit.mp3` — *ARROW_WOOD_IMPACT_SINGLE_ARCHERY_01.wav* by **JoeDinesSound** — https://freesound.org/s/534956/
 - `wind_day.mp3` — *Open_field_winds_summer_ambience.wav* by **nickmaysoundmusic** — https://freesound.org/s/523374/

@@ -21,7 +21,8 @@ export type ZombieKind =
   | 'elite'
   | 'crawler'
   | 'hound'
-  | 'pug';
+  | 'pug'
+  | 'boss';
 
 interface KindDef {
   model: ZombieModelId;
@@ -89,6 +90,11 @@ const KINDS: Record<ZombieKind, KindDef> = {
     tint: 0xd0b9a5, radius: 0.25, height: 0.9, hitOffset: 0.5,
     attackInterval: 0.9, attackRange: 1.7, ability: 'lunger',
   },
+  boss: {
+    model: 'chubby', health: 1400, speed: 2.7, damage: 85, scale: 2.05,
+    tint: 0x8fa968, radius: 0.68, height: 3.05, hitOffset: 1.72,
+    attackInterval: 1.35, attackRange: 2.95, ability: 'poison',
+  },
 };
 
 export function pickAmbientKind(day: number): ZombieKind {
@@ -146,6 +152,7 @@ export interface ZombieSense {
   noiseUntil: number;
   noiseRadius: number;
   hiveAlert: boolean;
+  viewDistance: number;
 }
 
 export class Zombie {
@@ -184,6 +191,13 @@ export class Zombie {
   screamTimer = 0;
   screamed = false;
   speedBoost = 0;
+  isBoss = false;
+  summoned = false;
+  enraged = false;
+  novaTimer = 7;
+  novaWindup = 0;
+  auraTimer = 3;
+  summonTimer = 12;
   attackTimer = 0.7 + Math.random() * 0.5;
   private visual: ZombieVisual | null = null;
   private walkPhase = Math.random() * 10;
@@ -193,6 +207,7 @@ export class Zombie {
   private breakSoundTimer = 0;
   private onGround = false;
   private visualBurning = false;
+  private visualAccum = 0;
   private poisonOnHit: boolean;
   private knockback: boolean;
   private lunger: boolean;
@@ -471,8 +486,6 @@ export class Zombie {
         this.group.position.copy(this.pos);
       }
     }
-    this.group.visible = this.pos.distanceTo(player.position) > 0.8 && this.pos.distanceTo(player.position) < 86;
-
     if (this.burning !== this.visualBurning) {
       this.visualBurning = this.burning;
       this.visual?.setBurning(this.burning);
@@ -494,8 +507,19 @@ export class Zombie {
       }
     }
 
-    // visual locomotion
+    // visual locomotion (LOD: full rate near, 10 Hz far, hidden outside view)
     const hSpeed = Math.hypot(this.vel.x, this.vel.z);
+    const viewDistance = sense.viewDistance;
+    const visualDistance = this.pos.distanceTo(player.position);
+    if (visualDistance < viewDistance) {
+      const step = visualDistance < 28 ? 0.033 : 0.1;
+      this.visualAccum += dt;
+      if (this.visualAccum >= step) {
+        this.visual?.update(this.visualAccum, hSpeed);
+        this.visualAccum = 0;
+      }
+    }
+    this.group.visible = visualDistance > 0.8 && visualDistance < viewDistance;
     const trapBelow = world.getBlock(
       Math.floor(this.pos.x), Math.floor(this.pos.y - 0.1), Math.floor(this.pos.z),
     );
@@ -517,10 +541,6 @@ export class Zombie {
     } else {
       this.trapTimer = 0;
     }
-    const visualDistance = this.pos.distanceTo(player.position);
-    if (visualDistance < 52) this.visual?.update(dt, hSpeed);
-    else if (visualDistance < 86) this.visual?.update(dt * 0.2, hSpeed);
-
     // break through walls
     if (active && blocked && this.blockedTime > 1.3 && dist < 22) {
       const ndx = dx / (dist || 1);
@@ -589,11 +609,14 @@ export class Zombie {
         const losHit = world.raycast(new THREE.Vector3(ex, ey, ez), losDir, len + 0.4);
         const hasLos = !losHit || losHit.distance > len - 0.45;
         if (hasLos) {
-          this.attackTimer = this.def.attackInterval;
-          player.takeDamage(this.damage);
+          this.attackTimer = this.enraged ? this.def.attackInterval * 0.68 : this.def.attackInterval;
+          const hitDamage = this.isBoss
+            ? player.maxHealth / 3 / Math.max(0.1, 1 - player.armorReduction) + 1
+            : this.damage;
+          player.takeDamage(hitDamage);
           this.visual?.attack();
           sound.hurt();
-          if (this.poisonOnHit) player.applyPoison(6);
+          if (this.poisonOnHit) player.applyPoison(this.isBoss ? 9 : 6);
           if (this.knockback) {
             player.velocity.x += (ddx / len) * 4.5;
             player.velocity.z += (ddz / len) * 4.5;
@@ -706,6 +729,10 @@ export class Zombie {
     sound.zombieDie();
   }
 
+  setGlow(hex: number, intensity: number) {
+    this.visual?.setEmissive(hex, intensity);
+  }
+
   dispose() {
     this.visual?.dispose();
     this.visual = null;
@@ -726,6 +753,9 @@ export class ZombieManager {
   private scene: THREE.Scene;
   private totalLimit = 30;
   private currentDay = 1;
+  viewDistance = 56;
+  private sepTimer = 0;
+  private tick = 0;
   private noiseX = 0;
   private noiseY = 0;
   private noiseZ = 0;
@@ -762,8 +792,8 @@ export class ZombieManager {
 
   update(dt: number, world: World, player: Player, isNight: boolean, day: number, darkness: number) {
     this.currentDay = Math.max(1, day);
-    this.maxAlive = Math.min(220, 80 + day * 10);
-    this.totalLimit = Math.min(260, 100 + day * 12);
+    this.maxAlive = Math.min(120, 55 + day * 7);
+    this.totalLimit = Math.min(150, 80 + day * 8);
 
     if (isNight && !player.dead) {
       this.spawnTimer -= dt;
@@ -771,7 +801,7 @@ export class ZombieManager {
         this.spawnTimer = Math.max(0.65, 2.1 - day * 0.1);
         const count = 1 + (Math.random() < 0.7 ? 1 : 0);
         for (let i = 0; i < count; i++) {
-          if (this.aliveCount() >= Math.min(90, 40 + day * 5)) break;
+          if (this.aliveCount() >= Math.min(55, 28 + day * 3)) break;
           this.spawnOne(world, player, darkness);
         }
       }
@@ -788,21 +818,24 @@ export class ZombieManager {
       noiseUntil: this.noiseUntil,
       noiseRadius: this.noiseRadius,
       hiveAlert: false,
+      viewDistance: this.viewDistance,
     };
 
-    for (const z of this.zombies) {
-      z.burning = !isNight && !z.poiId && !z.dead;
-      sense.hiveAlert = false;
-      if (!z.chasing && !z.dead) {
-        for (const other of this.zombies) {
-          if (other === z || other.dead || !other.chasing) continue;
-          if (other.pos.distanceToSquared(z.pos) < 18 * 18) {
-            sense.hiveAlert = true;
-            break;
-          }
-        }
-      }
+    // One cheap check per frame instead of an O(n²) hive scan: if anyone is
+    // already chasing, nearby idle zombies join the alarm.
+    sense.hiveAlert = this.zombies.some((z) => !z.dead && z.chasing);
+
+    this.tick = (this.tick + 1) & 7;
+    for (let index = 0; index < this.zombies.length; index++) {
+      const z = this.zombies[index];
+      const far = z.pos.distanceToSquared(player.position) > (this.viewDistance + 18) ** 2;
+      if (
+        far && !z.chasing && !z.dead && !z.isBoss &&
+        ((this.tick + index) & 3) !== 0
+      ) continue;
+      z.burning = !isNight && !z.poiId && !z.isBoss && !z.dead;
       z.update(dt, world, player, isNight, this.particles, this.sound, sense);
+      if (z.isBoss) this.updateBoss(z, world, player, dt);
 
       if (z.screamed) {
         z.screamed = false;
@@ -819,6 +852,12 @@ export class ZombieManager {
           this.particles.burst(z.pos.x, z.pos.y + 0.5, z.pos.z, 0x7d9a42, 24, 2.8, 0.1, 3, 1.4, 1.4);
           if (z.pos.distanceTo(player.position) < 4.5) player.applyPoison(5);
         }
+        if (z.kind === 'boss') {
+          this.particles.burst(z.pos.x, z.pos.y + 1.2, z.pos.z, 0x7d9a42, 70, 4.5, 0.11, 5, 1.8, 2.6);
+          this.particles.burst(z.pos.x, z.pos.y + 1.2, z.pos.z, 0x9eb96b, 30, 3.2, 0.09, 6, 1.4, 2.0);
+          if (z.pos.distanceTo(player.position) < 8) player.applyPoison(10);
+          this.sound.scream();
+        }
         this.onZombieDeath?.(z);
       }
       if (z.dead && z.deathTimer <= 0) {
@@ -832,8 +871,14 @@ export class ZombieManager {
     }
     this.zombies = this.zombies.filter((z) => z.group.parent !== null);
 
-    // Gentle flocking separation keeps the horde readable.
-    const living = this.zombies.filter((z) => !z.dead);
+    // Gentle flocking separation keeps the horde readable. Run it at 12 Hz
+    // and only for zombies the player can actually see.
+    this.sepTimer -= dt;
+    if (this.sepTimer > 0) return;
+    this.sepTimer = 0.08;
+    const living = this.zombies.filter(
+      (z) => !z.dead && z.pos.distanceToSquared(player.position) < 55 * 55,
+    );
     for (let i = 0; i < living.length; i++) {
       const a = living[i];
       for (let j = i + 1; j < living.length; j++) {
@@ -865,8 +910,90 @@ export class ZombieManager {
     }
   }
 
+  spawnBoss(x: number, y: number, z: number, day: number): Zombie {
+    const zed = this.spawnAt(x, y, z, 'boss');
+    zed.isBoss = true;
+    zed.maxHealth = 1100 + Math.max(1, day) * 150;
+    zed.health = zed.maxHealth;
+    zed.novaTimer = 6;
+    zed.auraTimer = 2;
+    zed.summonTimer = 10;
+    zed.setGlow(0x2f4a1a, 0.35);
+    return zed;
+  }
+
+  private updateBoss(z: Zombie, world: World, player: Player, dt: number) {
+    if (z.dead || !z.isBoss) return;
+    const dist = z.pos.distanceTo(player.position);
+
+    if (!z.enraged && z.health < z.maxHealth * 0.35) {
+      z.enraged = true;
+      z.speedBoost = Math.max(z.speedBoost, 2);
+      z.setGlow(0x6b1414, 0.7);
+      this.sound.bossRoar();
+      this.particles.burst(z.pos.x, z.pos.y + 1.2, z.pos.z, 0x8b2a1d, 40, 3.6, 0.11, 6, 1.4, 2.0);
+    }
+
+    if (z.novaWindup > 0) {
+      z.novaWindup -= dt;
+      if (z.novaWindup <= 0) {
+        this.sound.bossNova();
+        this.particles.burst(z.pos.x, z.pos.y + 1.2, z.pos.z, 0x7d9a42, 56, 4.8, 0.11, 7, 1.8, 2.6);
+        this.particles.burst(z.pos.x, z.pos.y + 1.2, z.pos.z, 0x9eb96b, 26, 3.4, 0.09, 7, 1.4, 2.0);
+        if (!player.dead && dist < 9.5) {
+          player.takeDamage(22);
+          player.applyPoison(10);
+        }
+      }
+    } else {
+      z.novaTimer -= dt;
+      if (z.novaTimer <= 0 && dist < 15) {
+        z.novaTimer = 11 + Math.random() * 4;
+        z.novaWindup = 0.9;
+        this.sound.bossRoar();
+        this.particles.burst(z.pos.x, z.pos.y + 1.4, z.pos.z, 0x5d7a2f, 18, 2.2, 0.08, 8, 1.0, 1.6);
+      }
+    }
+
+    z.auraTimer -= dt;
+    if (z.auraTimer <= 0) {
+      z.auraTimer = 4;
+      if (!player.dead && dist < 7) {
+        player.applyPoison(3);
+        this.particles.burst(player.position.x, player.position.y + 0.8, player.position.z, 0x7d9a42, 9, 1.4, 0.07, 10, 0.8, 1.2);
+      }
+    }
+
+    z.summonTimer -= dt;
+    if (z.summonTimer <= 0 && !player.dead) {
+      z.summonTimer = 16;
+      const minions = this.zombies.filter((o) => o.summoned && !o.dead).length;
+      if (minions < 4 && dist < 55) {
+        for (let i = 0; i < 3; i++) {
+          const angle = Math.random() * Math.PI * 2;
+          const radius = 2.4 + Math.random() * 2.4;
+          const x = Math.floor(z.pos.x + Math.cos(angle) * radius);
+          const zz = Math.floor(z.pos.z + Math.sin(angle) * radius);
+          const top = world.columnTop(x, zz);
+          if (top <= 0) continue;
+          const topBlock = world.getBlock(x, top, zz);
+          if (topBlock === Block.Water || topBlock === Block.Leaves || topBlock === Block.Air) continue;
+          const kind = Math.random() < 0.6 ? 'toxic' : 'runner';
+          const minion = this.spawnAt(x + 0.5, top + 1.02, zz + 0.5, kind);
+          minion.summoned = true;
+          minion.home.copy(z.pos);
+        }
+        this.sound.bossNova();
+      }
+    }
+  }
+
   private spawnOne(world: World, player: Player, darkness: number) {
     if (this.aliveCount() >= this.totalLimit) return;
+    // Night wanderers belong to the wilderness. Inside a town only its
+    // persistent residents and street horde exist, so the town can be cleared.
+    const nearest = world.towns.nearestTown(player.position.x, player.position.z);
+    if (nearest && nearest.distance < 95) return;
     const angle = Math.random() * Math.PI * 2;
     const dist = 20 + Math.random() * 22;
     const x = Math.round(player.position.x + Math.cos(angle) * dist);
